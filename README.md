@@ -1,8 +1,12 @@
 # SECTOR 34
 
-**Description**: Sector 34 is a Space 4x-lite, inspired by games like Master of Orion, Risk, and Sword of the Stars. The goal is to unite the sector under the player's control, vying against pirates and the fellow remnants of a collapsed empire that has left the sector to its fate. To do so, they will need to be cunning and judicious in the use of their fleets. They will need to use clever timing, and out-smart the AI opponents (who are no push-over).
+![Strategic Mode Screenshot](screenshots/strategy_mode_screenshot_1.png)
 
-**Installation**: The current prototype requires that the user have python and pygame installed already. In the near future, I'll look to package the game in a way that includes pygame in some kind of executable. If you have python and pygame installed, then it's as simple as cloning this repository, `cd`-ing into the directory, and running `python src/sector34.py`.
+![Tactical Mode Screenshot](screenshots/tactical_mode_screenshot_1.png)
+
+**Description**: Sector 34 is a Space 4x-lite, inspired by games like Master of Orion, Risk, and Sword of the Stars. The goal is to unite the sector under the player's control, vying against pirates and the fellow remnants of a collapsed empire that has left the sector to its fate. To do so, they will need to be cunning and judicious in the use of their fleets. They will need to use clever timing, and out-smart the AI opponents.
+
+**Installation**: To play from source code, you must have both a python interpreter (python 3) and pygame installed. After that, it's as simple as `python sector34.py`. If you just want to download an executable file, you can do so [here](https://sgibber2018.itch.io/sector-34). If you would like to make your own executable, I have included the `.spec` file for pyinstaller, and if you have pyinstaller installed then all you need to do is run `pyinstaller sector34.spec`, and it will bundle everything in to a single executable file.
 
 **How to Play**: The goal of the game is to eliminate all AI empire factions (there are for now 6 of them), and subjugate all the pirate systems, as well as conquering at least 50% of the total map. This is easier said than done. To do so, the player must use their fleets. Each system on the map has a chance (randomly determined within a range, except for the player and AI homeworlds which start with a larger fixed bonus) to spawn a new unit every turn. Each system also has a sensor range (again with the player starting out with an advantage on their world). The player must decide where to place their reenforcements every turn, and then decide where to send their fleets. That's the game in a nutshell. But don't underestimate it: the AI is capable of putting up a solid fight.
 
@@ -14,9 +18,11 @@
 
 **License**: I have chosen the MIT license for this project. I encourage anyone interested to make pull requests or fork it for their own purposes. The world could use more 4x games.
 
-**Font**: The font is provided by Bernd Montag under the Open Font License (see the sansation/ directory). 
+**Font**: The font is provided by Bernd Montag under the Open Font License (see the `sansation/` directory). 
 
 ### Advanced Gameplay Tips
+
+At this stage of development, the AI is capable of giving the player a hard time at the beginning of the game and in certain middle- and late-game circumstances that can arise, but if the player can quickly establish a large zone of control and reenforcement income then it is very easy for the savvy player to steamroll the AI. In future versions there will be many additional improvements to the AI and more threats to consider (such as non-FTL systems promoting to Empires, threats from off-map, and so forth). But for now, most players will find it to be pretty easy past the initial stages except during exceptional circumstances. If you should find yourself in a pickle, however, then consider the following advice:
 
 * Bank Reenforcements: You can bank your reenforcements. This is really important. If you spend them every turn just to spend them then they aren't there to be spent at the decisive moment. On the other hand, if you never spend them then they aren't on the map for the AI to think about (see "Predict the AI", below). Always make sure you have a reason for spending reenforcements. Are you trying to deter an AI world within range from attacking? Or are you preparing for an attack? If you bank reenforcements then you can wait until the enemy fleet is literally 1 turn away before spending them. This can make the difference between success and defeat. But don't bank all of them, because you need to use your fleets actively from the start or the AI will get a potentially unsurmountable lead.
 
@@ -46,4 +52,4 @@
 
 * Minimize the game at your own risk at the moment. Screen locking or having another window on top is just fine, but clicking the minimize button can sometimes cause the game's display to bug out. To fix this I need to do a little more research on pygame. I apologize for inconvenience in the meantime.
 
-* 
+* Once in awhile, fleets will get stuck at 0 turns ETA for a turn or two before arriving at their destination. This is likely a small oversight on my part, and will be fixed in a future update.
