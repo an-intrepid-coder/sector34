@@ -1,7 +1,8 @@
-from random import choice, randrange, shuffle
+from random import choice, randrange, shuffle, randint
 from constants import *
 from location import Location, LocationType
-from faction import Faction, ai_empire_factions
+from faction_type import FactionType, ai_empire_faction_types
+from fleet import Fleet
 from pygame.math import Vector2, clamp
 from utility import phonetic_index, coin_flip, primary_system_names, secondary_system_names, prefix_system_names, d100, ai_empire_faction_post_labels, ai_empire_faction_pre_labels
 
@@ -19,7 +20,7 @@ class Node:
 # TODO: variable sized star maps, for when there is a zooming/scrolling map
 #       and full-screen. 
 class StarMap:
-    def __init__(self):
+    def __init__(self, debug_mode):
         self.width = MAP_WIDTH_PX / LY
         self.height = MAP_HEIGHT_PX / LY
         self.locations = []
@@ -27,10 +28,10 @@ class StarMap:
         self.player_hw = None
         self.deployed_fleets = []
         self.faction_homeworlds = []
-        self.faction_names = {}
+        self.faction_names = {}  
         self.num_stars = 0
 
-        def generate_map():
+        def generate_map(): 
             # partition the map into a spawning grid
             partition_grid_side = int((DEFAULT_FUEL_RANGE_LY * LY) // 2)
             cells_wide = MAP_WIDTH_PX // partition_grid_side
@@ -59,12 +60,15 @@ class StarMap:
         def place_player():
             # player starting world and fleets
             i = randrange(0, len(self.locations))
-            self.locations[i].faction = Faction.PLAYER
+            self.locations[i].faction_type = FactionType.PLAYER
             self.locations[i].ships = PLAYER_STARTING_SHIPS
+            if debug_mode:
+                self.locations[i].ships = PLAYER_DEBUG_MODE_SHIPS
             self.locations[i].reenforce_chance_out_of_100 = DEFAULT_HW_REENFORCEMENT_CHANCE_OUT_OF_100
             self.locations[i].sensor_range = DEFAULT_HW_SENSOR_RANGE_LY
             self.player_hw = self.locations[i]
-            self.faction_names[Faction.PLAYER] = "Player"  # TODO: Better name for player
+            self.faction_homeworlds.append(self.player_hw)
+            self.faction_names[FactionType.PLAYER] = "Player"  
 
         def place_ai_empires():
             # AI Empire starting worlds and fleets
@@ -72,43 +76,50 @@ class StarMap:
             generated = 0
             index = 0
             while generated < NUM_AI_EMPIRES:
-                if self.locations[index].faction is None:
-                    self.locations[index].faction = ai_empire_factions[generated]
+                if self.locations[index].faction_type is None:
+                    self.locations[index].faction_type = ai_empire_faction_types[generated]
                     self.locations[index].ships = AI_EMPIRE_STARTING_SHIPS
                     self.locations[index].sensor_range = DEFAULT_HW_SENSOR_RANGE_LY
                     self.locations[index].reenforce_chance_out_of_100 = DEFAULT_AI_REENFORCE_CHANCE_OUT_OF_100_MAX
                     self.faction_homeworlds.append(self.locations[index])
                     generated += 1
+                    if debug_mode:
+                        self.locations[index].ships = AI_EMPIRE_DEBUG_MODE_SHIPS
                 index += 1
             for loc in self.faction_homeworlds:
-                faction_name = "{}".format(loc.name)
-                if coin_flip():
-                    faction_name = "{} {}".format(choice(ai_empire_faction_pre_labels), faction_name)
-                else:
-                    faction_name = "{} {}".format(faction_name, choice(ai_empire_faction_post_labels))
-                self.faction_names[loc.faction] = faction_name
+                if loc.faction_type != FactionType.PLAYER:
+                    faction_name = "{}".format(loc.name)
+                    if coin_flip() and len(faction_name) < AI_EMPIRE_FACTION_NAME_SIZE_CONSTRAINT:
+                        faction_name = "{} {}".format(choice(ai_empire_faction_pre_labels), faction_name)
+                    else:
+                        faction_name = "{} {}".format(faction_name, choice(ai_empire_faction_post_labels))
+                    self.faction_names[loc.faction_type] = faction_name
 
         def place_pirates():
             # Pirate starting worlds and fleets
             shuffle(self.locations)
-            num_pirates = self.num_stars // PERCENT_MAP_PIRATES
+            num_pirates = int(self.num_stars * PIRATE_DENSITY)
             generated = 0
             index = 0
             while generated < num_pirates:
-                if self.locations[index].faction is None:
-                    self.locations[index].faction = Faction.PIRATES
-                    self.locations[index].ships = PIRATES_STARTING_SHIPS
+                if self.locations[index].faction_type is None:
+                    self.locations[index].faction_type = FactionType.PIRATES
+                    self.locations[index].ships = randint(PIRATES_STARTING_SHIPS_MIN, PIRATES_STARTING_SHIPS_MAX)
+                    if debug_mode:
+                        self.locations[index].ships = PIRATE_DEBUG_MODE_SHIPS
                     generated += 1
                 index += 1
-            self.faction_names[Faction.PIRATES] = "Pirates"
+            self.faction_names[FactionType.PIRATES] = "Pirates"
 
         def place_non_spacefaring():
             # non-space-faring worlds and fleets
             for loc in self.locations:
-                if loc.faction is None:
-                    loc.faction = Faction.NON_SPACEFARING
-                    loc.ships = NON_SPACEFARING_STARTING_SHIPS
-            self.faction_names[Faction.NON_SPACEFARING] = "Local Forces"
+                if loc.faction_type is None:
+                    loc.faction_type = FactionType.NON_SPACEFARING
+                    loc.ships = randint(NON_SPACEFARING_STARTING_SHIPS_MIN, NON_SPACEFARING_STARTING_SHIPS_MAX)
+                    if debug_mode:
+                        loc.ships = NON_SPACEFARING_DEBUG_MODE_SHIPS
+            self.faction_names[FactionType.NON_SPACEFARING] = "Local Forces"
 
         generate_map()
         place_player()
@@ -118,7 +129,7 @@ class StarMap:
 
     def get_faction_homeworld(self, faction):
         for loc in self.faction_homeworlds:
-            if loc.faction == faction:
+            if loc.faction_type == faction:
                 return loc
         return None
 
@@ -135,7 +146,7 @@ class StarMap:
                 return name
 
     def get_num_fleets_of_faction(self, faction):
-        return len([i for i in filter(lambda x: x.faction == faction, self.deployed_fleets)])
+        return len([i for i in filter(lambda x: x.faction_type == faction, self.deployed_fleets)])
 
     def name_a_fleet(self, faction):
         return "{} Fleet".format(phonetic_index(self.get_num_fleets_of_faction(faction)))
@@ -149,7 +160,7 @@ class StarMap:
     def nearest_friendly_world_to(self, fleet):
         closest = None
         for loc in self.locations:
-            if loc.faction == fleet.faction:
+            if loc.faction_type == fleet.faction_type:
                 if closest is None:
                     closest = loc
                 else:
@@ -157,3 +168,25 @@ class StarMap:
                     if distance < Vector2(closest.pos).distance_to(Vector2(fleet.pos)) / LY:
                         closest = loc
         return closest
+
+    def deploy_fleet(self, source, dest, num_ships):  
+        if num_ships < 1: 
+            return
+        if source.ly_to(dest.pos) > DEFAULT_FUEL_RANGE_LY:
+            return
+        if source.ships - 1 >= num_ships:
+            name = self.name_a_fleet(source.faction_type)
+            fleet = Fleet(name, source.pos, source.faction_type, num_ships, dest)
+            self.deployed_fleets.append(fleet)
+            source.ships -= num_ships
+
+    def nearest_vulnerable_world_to(self, fleet):
+        neighbors = [i for i in filter(lambda x: x.ly_to(fleet.pos) <= DEFAULT_FUEL_RANGE_LY, self.locations)]
+        weakest = None
+        for loc in neighbors:
+            if weakest is None:
+                weakest = loc
+            elif loc.ships < weakest.ships:
+                weakest = loc
+        return weakest
+

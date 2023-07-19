@@ -48,6 +48,7 @@ def phonetic_index(i):
 
 primary_system_names = [
     "Terra",
+    "Gibby",
     "Omicron",
     "Reticuli",
     "Centauri",
@@ -194,5 +195,19 @@ def coin_flip():
 # returns a list with a number of d100 results
 def d100(num_dice=1, bonus=0):
     results = [randint(1, 100) + bonus for _ in range(num_dice)]
+    results.sort(reverse=True)
+    return results
+
+
+# returns a list with a number of d1000 results
+def d1000(num_dice=1, bonus=0):
+    results = [randint(1, 1000) + bonus for _ in range(num_dice)]
+    results.sort(reverse=True)
+    return results
+
+
+# returns a list with a number of d10000 results
+def d10000(num_dice=1, bonus=0):
+    results = [randint(1, 10000) + bonus for _ in range(num_dice)]
     results.sort(reverse=True)
     return results

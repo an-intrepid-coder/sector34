@@ -3,6 +3,7 @@ class Clickable:
         self.rect = rect
 
     def clicked(self, pos):
-        return self.rect[0] <= pos[0] < self.rect[0] + self.rect[2] and self.rect[1] <= pos[1] < self.rect[1] + \
-            self.rect[3]
+        within_x = pos[0] >= self.rect[0] and pos[0] < self.rect[0] + self.rect[2]
+        within_y = pos[1] >= self.rect[1] and pos[1] < self.rect[1] + self.rect[3]
+        return within_x and within_y
 

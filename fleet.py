@@ -5,23 +5,25 @@ from math import ceil
 
 
 class Fleet(Clickable):
-    def __init__(self, name, pos, faction, ships, destination, speed=DEFAULT_SPEED_LY):
-        super().__init__((pos[0], pos[1], STAR_RADIUS_PX, STAR_RADIUS_PX))
+    def __init__(self, name, pos, faction_type, ships, destination, speed=DEFAULT_SPEED_LY):
+        hit_box =  (pos[0] - FLEET_HITBOX_SIDE_PX / 2, pos[1] - FLEET_HITBOX_SIDE_PX / 2, FLEET_HITBOX_SIDE_PX, FLEET_HITBOX_SIDE_PX)
+        super().__init__(hit_box)
         self.pos = pos
         self.name = name
-        self.faction = faction
+        self.faction_type = faction_type
         self.ships = ships
         self.destination = destination
         self.speed = speed
-        self.fighting_range = STAR_RADIUS_PX
         self.in_sensor_view = False
+        self.sensor_range = DEFAULT_FLEET_SENSOR_RANGE_LY
 
     # Moves the fleet LY * speed towards its destination
     def move(self):
         new_pos = Vector2(self.pos).move_towards(Vector2(self.destination.pos),
                                                  self.speed * LY)
+        hit_box =  (new_pos[0] - FLEET_HITBOX_SIDE_PX / 2, new_pos[1] - FLEET_HITBOX_SIDE_PX / 2, FLEET_HITBOX_SIDE_PX, FLEET_HITBOX_SIDE_PX)
         self.pos = new_pos
-        self.rect = (new_pos[0], new_pos[1], STAR_RADIUS_PX, STAR_RADIUS_PX)
+        self.rect = hit_box
 
     # Takes point on the map and returns the # of LYs between them
     def ly_to(self, point):
