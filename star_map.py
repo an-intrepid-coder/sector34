@@ -33,16 +33,15 @@ class StarMap:
 
         def generate_map(): 
             # partition the map into a spawning grid
-            partition_grid_side = int((DEFAULT_FUEL_RANGE_LY * LY) // 2)
-            cells_wide = MAP_WIDTH_PX // partition_grid_side
-            cells_high = MAP_HEIGHT_PX // partition_grid_side
+            cells_wide = MAP_WIDTH_PX // PARTITION_GRID_SIDE
+            cells_high = MAP_HEIGHT_PX // PARTITION_GRID_SIDE
             for x in range(cells_wide):
                 for y in range(cells_high):
                     while True:
                         # pick a random point within the spawning grid cell
-                        spawn_x = clamp(randrange(x * partition_grid_side, x * partition_grid_side + partition_grid_side),
+                        spawn_x = clamp(randrange(x * PARTITION_GRID_SIDE, x * PARTITION_GRID_SIDE + PARTITION_GRID_SIDE),
                                         MAP_BORDER_SPAWN_PADDING_PX, MAP_WIDTH_PX - MAP_BORDER_SPAWN_PADDING_PX)
-                        spawn_y = clamp(randrange(y * partition_grid_side, y * partition_grid_side + partition_grid_side),
+                        spawn_y = clamp(randrange(y * PARTITION_GRID_SIDE, y * PARTITION_GRID_SIDE + PARTITION_GRID_SIDE),
                                         MAP_BORDER_SPAWN_PADDING_PX, MAP_HEIGHT_PX - MAP_BORDER_SPAWN_PADDING_PX)
                         pos = (spawn_x, spawn_y)
                         # ensure picked spot isn't too close to any already-spawned locations
@@ -53,7 +52,7 @@ class StarMap:
                                 break
                         if clear:
                             name = self.name_a_star_system()
-                            self.locations.append(Location(name, pos, LocationType.STAR_SYSTEM))
+                            self.locations.append(Location(name, pos, LocationType.STAR_SYSTEM, (x, y)))
                             self.num_stars += 1
                             break
 
@@ -76,7 +75,7 @@ class StarMap:
             generated = 0
             index = 0
             while generated < NUM_AI_EMPIRES:
-                if self.locations[index].faction_type is None:
+                if self.locations[index].faction_type is None and self.locations[index].ly_to(self.player_hw.pos) > DEFAULT_HW_SENSOR_RANGE_LY:
                     self.locations[index].faction_type = ai_empire_faction_types[generated]
                     self.locations[index].ships = AI_EMPIRE_STARTING_SHIPS
                     self.locations[index].sensor_range = DEFAULT_HW_SENSOR_RANGE_LY
@@ -155,6 +154,9 @@ class StarMap:
         if fleet in self.deployed_fleets:
             self.deployed_fleets.remove(fleet)
 
+    def systems_in_range_of(self, loc):
+        return [i for i in filter(lambda x: x.ly_to(loc.pos) <= DEFAULT_FUEL_RANGE_LY, self.locations)]
+
     # Returns closest friendly world for a fleet,
     # or None if there are none to be found
     def nearest_friendly_world_to(self, fleet):
@@ -173,6 +175,8 @@ class StarMap:
         if num_ships < 1: 
             return
         if source.ly_to(dest.pos) > DEFAULT_FUEL_RANGE_LY:
+            return
+        if source == dest:
             return
         if source.ships - 1 >= num_ships:
             name = self.name_a_fleet(source.faction_type)

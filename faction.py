@@ -17,8 +17,8 @@ class Faction:
         else:
             self.homeworld = [i for i in filter(lambda x: x.faction_type == faction_type, star_map.faction_homeworlds)][0]
         self.name = star_map.faction_names[faction_type]
-        self.personality_traits = []  # un-implemented
-        self.strategic_objectives = []  # un-implemented
+        self.personality_traits = []  # un-implemented, but soon
+        self.strategic_objectives = []  # un-implemented, but soon
 
     def run_behavior(self, game):
         # This function handles all of the logic and action of AI Empire factions,
@@ -28,6 +28,12 @@ class Faction:
         # TODO: Personality traits
         star_map = game.star_map
 
+        def will_attack():
+            return d100()[0] <= BASE_AI_EMPIRE_ATTACK_CHANCE_OUT_OF_100
+
+        def min_to_attack(needed_reserves, source, target):
+            return source.ships - needed_reserves >= target.ships * AI_EMPIRE_OVERMATCH_THRESHOLD
+            
         def is_hostile_neighbor_of(friendly_loc, other_loc):
             pirates = other_loc.faction_type == FactionType.PIRATES
             non_ftl = other_loc.faction_type == FactionType.NON_SPACEFARING
@@ -66,6 +72,23 @@ class Faction:
         def all_hostile_fleets_in_range_of(loc):
             return [i for i in filter(lambda x: x.ly_to(loc.pos) <= DEFAULT_FUEL_RANGE_LY, hostile_fleets)]
 
+        def get_num_defenders(loc):
+            num_defenders = loc.ships
+            for fleet in all_hostile_fleets_in_range_of(loc):
+                if fleet.destination == loc and is_aware_of(fleet.pos):
+                    num_defenders += fleet.ships
+            return num_defenders
+
+        def get_already_inbound_attackers(loc):
+            num_attackers = 0
+            for fleet in all_owned_fleets_in_range_of(loc):
+                if fleet.destination == loc:
+                    num_attackers += fleet.ships
+            return num_attackers
+
+        def get_sources_of_attack(target):
+            return [i for i in filter(lambda x: not is_threatened(x) and not x.rallying, all_friendly_neighbors_of(target))]
+
         def is_aware_of(pos):
             # can be seen by any fleet or location owned by the faction
             for owned_loc in owned_systems:
@@ -77,32 +100,62 @@ class Faction:
             return False
 
         def is_threatened(loc):
-            # there are incoming fleets
+            # there are incoming fleets of a threatening size
             for fleet in all_hostile_fleets_in_range_of(loc):
-                if fleet.destination == loc and is_aware_of(fleet.pos):
+                if fleet.destination == loc and fleet.ships > loc.ships / 2 and is_aware_of(fleet.pos):
                     return True
             return False
-            # TODO: Maybe also a function for border worlds that just happen to be close to strong enemy systems.
-            #       That would be useful for having the AI create "front lines" and manage reserves better, in
-            #       future versions.
 
-        def rally_check():
-            for system in owned_systems:
-                if system.faction_type == self.faction_type and not is_threatened(system) and system.rallying:
-                    fleets_in_range = all_owned_fleets_in_range_of(system)
-                    still_rallying = False
-                    for fleet in fleets_in_range:
-                        if fleet.destination == system:
-                            still_rallying = True
-                    if not still_rallying and system.ships > 1:
-                        # TODO: Maybe leave some reserves and/or check to make sure system hasn't
-                        #       been heavily reenforced in the meantime.
-                        if system.ships - 1 >= system.rally_target.ships:
-                            # Last-minute re-evaluation to make sure it's still a good attack
-                            star_map.deploy_fleet(system, system.rally_target, system.ships - 1)
-                        system.rallying = False
-                        system.rally_target = None
-                    
+        def calculate_needed_reserves(loc):
+            # count hostile forces in the area
+            hostile_neighbors = all_hostile_neighbors_of(loc)
+            area_hostile_ship_count = 0
+            strongest_threat_ship_count = 0
+            for neighbor in hostile_neighbors:
+                if is_aware_of(neighbor.pos) and neighbor.faction_type != FactionType.NON_SPACEFARING:
+                    threat_count = neighbor.ships - 1
+                    nearby_hostile_fleets = all_hostile_fleets_in_range_of(neighbor)
+                    for fleet in nearby_hostile_fleets:
+                        if is_aware_of(fleet.pos) and fleet.destination == neighbor:
+                            threat_count += fleet.ships
+                    area_hostile_ship_count += threat_count
+                    if threat_count > strongest_threat_ship_count:
+                        strongest_threat_ship_count = threat_count
+            # count friendly forces in the area
+            friendly_neighbors = [i for i in filter(lambda x: not is_threatened(x), all_friendly_neighbors_of(loc))]
+            local_defender_count = 0 
+            for neighbor in friendly_neighbors:  
+                local_defender_count += neighbor.ships
+                nearby_friendly_fleets = all_owned_fleets_in_range_of(neighbor)
+                for fleet in nearby_friendly_fleets:
+                    if fleet.destination == neighbor:
+                        local_defender_count += fleet.ships
+            # needed reserves is a portion of the hostile count minus a portion of the friendly count
+            hostile_count = strongest_threat_ship_count + area_hostile_ship_count
+            adjusted_hostile_count = int(hostile_count * AI_EMPIRE_HOSTILE_COUNT_FACTOR)
+            adjusted_friendly_count = int(local_defender_count * AI_EMPIRE_FRIENDLY_COUNT_FACTOR)
+            return max(adjusted_hostile_count - adjusted_friendly_count, 1)
+
+        def rally_check():  
+            rally_points = [i for i in filter(lambda x: x.rallying, owned_systems)]
+            for system in rally_points:
+                needed_reserves = calculate_needed_reserves(system)
+                fleets_in_range = all_owned_fleets_in_range_of(system)
+                still_rallying = False
+                for fleet in fleets_in_range:
+                    if fleet.destination == system:
+                        still_rallying = True
+                if not still_rallying:
+                    reasonable_attack = True
+                    if is_threatened(system):
+                        reasonable_attack = False
+                    if system.ships - system.rally_amount < needed_reserves:
+                        reasonable_attack = False
+                    if reasonable_attack:
+                        star_map.deploy_fleet(system, system.rally_target, system.rally_amount)
+                    system.rallying = False
+                    system.rally_target = None
+                    system.rally_amount = 0
 
         rally_check()
 
@@ -176,105 +229,115 @@ class Faction:
                     return False
             return True
 
-        def is_viable_target(loc):
+        def is_viable_target(loc): 
             # is within fuel range of enough ships split between close worlds that a combined attack
             # would be potentially successful
-            num_defenders = loc.ships
-            for fleet in all_hostile_fleets_in_range_of(loc):
-                if fleet.destination == loc and is_aware_of(fleet.pos):
-                    num_defenders += fleet.ships
-
-            num_attackers = 0
-            for fleet in all_owned_fleets_in_range_of(loc):
-                if fleet.destination == loc:
-                    num_attackers += fleet.ships
+            num_defenders = get_num_defenders(loc)
+            num_attackers = get_already_inbound_attackers(loc)
 
             if num_attackers >= num_defenders:
                 # Avoid attacking systems already under attack from a previous decision
                 return False
 
-            sources = [i for i in filter(lambda x: not is_threatened(x) and not x.rallying, all_friendly_neighbors_of(loc))]
+            sources = get_sources_of_attack(loc)
             for source in sources:
-                num_attackers += source.ships - 1
+                reserve = calculate_needed_reserves(source)
+                num_attackers += max(source.ships - reserve, 0) 
 
             if num_attackers >= num_defenders * AI_EMPIRE_OVERMATCH_THRESHOLD:
                 return True
             return False
 
         def attack(loc): 
-            num_defenders = loc.ships
-            for fleet in all_hostile_fleets_in_range_of(loc):
-                if fleet.destination == loc and is_aware_of(fleet.pos):
-                    num_defenders += fleet.ships
+            num_defenders = get_num_defenders(loc)
 
-            sources = [i for i in filter(lambda x: not is_threatened(x) and not x.rallying, all_friendly_neighbors_of(loc))]
-            en_route = [i for i in filter(lambda x: x.destination == loc, all_owned_fleets_in_range_of(loc))]
-            num_en_route = sum([i for i in map(lambda x: x.ships, en_route)])
+            sources = get_sources_of_attack(loc)
             sending = {}
             for source in sources:
                 sending[source] = 0
             max_available = 0
             for source in sources:
-                max_available += source.ships - 1
-            min_to_send = int((loc.ships - num_en_route) * AI_EMPIRE_MIN_ATTACK_RATIO)
-            if min_to_send < 0:
-                min_to_send = 0
-            max_to_send = int((loc.ships - num_en_route) * AI_EMPIRE_MAX_ATTACK_RATIO)
-            if max_to_send < min_to_send:
-                max_to_send = min_to_send
-            if max_to_send > max_available:
-                max_to_send = max_available
-            num_to_deploy = randint(min_to_send, max_to_send)
+                needed_reserves = calculate_needed_reserves(source)
+                max_available += max(source.ships - needed_reserves, 0)
+            min_to_send = max(int(loc.ships * AI_EMPIRE_MIN_ATTACK_RATIO), 0)
+            max_to_send = min(max(int(loc.ships * AI_EMPIRE_MAX_ATTACK_RATIO), min_to_send), max_available)
+            
+            num_to_deploy = max_to_send 
+            if min_to_send < max_to_send: 
+                num_to_deploy = randint(min_to_send, max_to_send)
+
             en_route = 0
             for source in sources:
+                needed_reserves = calculate_needed_reserves(source)
+                deploying = max(source.ships - needed_reserves, 0)
+                en_route = min(en_route + deploying, num_to_deploy)
+                sending[source] = deploying
                 if en_route >= num_to_deploy:
                     break
-                deploying = source.ships - 1
-                if en_route + deploying >= max_to_send:
-                    deploying = max_to_send - en_route
-                en_route += deploying
-                sending[source] = deploying
 
             coordinated_attack = len(sources) > 1
+            single_point_attack = len(sources) == 1
             if coordinated_attack:
-                rally_point = nearest_friendly_system_to(loc)
-                rally_point.rallying = True
-                rally_point.rally_target = loc
-                for source in sources: # TODO: Rally these
-                    if sending[source] > 0:
+                valid_rally_points = [i for i in filter(lambda x: not x.rallying, all_friendly_neighbors_of(loc))]
+                if len(valid_rally_points) > 0:
+                    rally_point = choice(valid_rally_points)
+                    rally_point.rallying = True
+                    rally_point.rally_target = loc
+                    rally_point.rally_amount = en_route
+                    for source in sources: 
                         star_map.deploy_fleet(source, rally_point, sending[source])
-            elif len(sources) > 0:
-                star_map.deploy_fleet(sources[0], loc, sending[sources[0]])
+            elif single_point_attack:
+                source = sources[0]
+                star_map.deploy_fleet(source, loc, sending[source])
 
         def evacuate(loc):
             # flee to a friendly world, or to a hostile world, or not at all, depending on factors
-            # Prioritize friendly threatened worlds, then any friendly world, and finally, if no other option,
-            # the weakest neighboring world which doesn't pass the threshold for evac.
-            # If none of those are viable at all, it will stay put and hope for good dice rolls
-            # TODO: This can be improved. Hostile evacs are lacking.
             if loc.ships > 1:
                 friendly_neighbors = all_friendly_neighbors_of(loc)
                 shuffle(friendly_neighbors)
                 evacuated = False
-                for neighbor in friendly_neighbors:
-                    if is_threatened(neighbor):
-                        star_map.deploy_fleet(loc, neighbor, loc.ships - 1)
-                        evacuated = True
-                        break
-                if not evacuated and len(friendly_neighbors) > 0:
-                    target = choice(friendly_neighbors)
-                    evacuated = True
-                    star_map.deploy_fleet(loc, target, loc.ships - 1)
+
+                def supporting_evac_routine(evacuated):
+                    for neighbor in friendly_neighbors:
+                        if is_threatened(neighbor):
+                            star_map.deploy_fleet(loc, neighbor, loc.ships - 1)
+                            return True
+                    return False
+
+                def friendly_evac_routine(evacuated): 
+                    if not evacuated and len(friendly_neighbors) > 0:
+                        target = choice(friendly_neighbors)
+                        star_map.deploy_fleet(loc, target, loc.ships - 1)
+                        return True
+                    return False
+
+                def hostile_evac_routine(evacuated):
+                    if not evacuated:
+                        neighbors = all_hostile_neighbors_of(loc)
+                        weakest = None
+
+                        def is_first_viable_target(neighbor):
+                            return weakest is None and neighbor.ships < loc.ships
+       
+                        def is_other_viable_target(neighbor): 
+                            return weakest is not None and weakest.ships < neighbor.ships and neighbor.ships < loc.ships
+
+                        def viable_target_found():
+                            return weakest is not None and loc.ships > weakest.ships * AI_EMPIRE_MIN_ATTACK_RATIO
+
+                        for neighbor in neighbors:
+                            if is_first_viable_target(neighbor):
+                                weakest = neighbor
+                            elif is_other_viable_target(neighbor):
+                                weakest = neighbor
+                        if viable_target_found():
+                            star_map.deploy_fleet(loc, weakest, loc.ships - 1)
+
+                evacuated = supporting_evac_routine(evacuated)
                 if not evacuated:
-                    neighbors = all_hostile_neighbors_of(loc)
-                    weakest = None
-                    for neighbor in neighbors:
-                        if weakest is None:
-                            weakest = neighbor
-                        elif weakest.ships < neighbor.ships:
-                            weakest = neighbor
-                    if loc.ships < weakest.ships * AI_EMPIRE_EVACUATION_THRESHOLD:
-                        star_map.deploy_fleet(loc, weakest, loc.ships - 1)
+                    evacuated = friendly_evac_routine(evacuated)
+                if not evacuated:
+                    hostile_evac_routine(evacuated)
 
         def activate_reserves(loc):
             # move to a nearby friendly world
@@ -286,14 +349,21 @@ class Faction:
         threatened_systems = [i for i in filter(lambda x: is_threatened(x), owned_systems)]
         shuffle(threatened_systems)
 
+        understrength_systems = [i for i in filter(lambda x: x.ships < calculate_needed_reserves(x), owned_systems)]
+        shuffle(understrength_systems)
+
         # Handle player reenforcements in watch_mode
         if self.faction_type == FactionType.PLAYER and game.watch_mode:
             # Player in Watch mode will bank some reenforcements to prioritize
             # threatened worlds later. Not as well as a good human player though.
-            banking = coin_flip() and len(threatened_systems) == 0
+            banking = coin_flip() and len(threatened_systems) == 0 and len(understrength_systems) == 0
             if not banking:
                 while game.player_reenforcement_pool > 0:
                     for loc in threatened_systems:
+                        if game.player_reenforcement_pool > 0:
+                            loc.ships += 1
+                            game.player_reenforcement_pool -= 1
+                    for loc in understrength_systems:
                         if game.player_reenforcement_pool > 0:
                             loc.ships += 1
                             game.player_reenforcement_pool -= 1
@@ -331,9 +401,8 @@ class Faction:
         for threatened_loc in evac_list:
             evacuate(threatened_loc)
         for viable_target in viable_target_list:
-            if is_viable_target(viable_target):  # this can change throughout the loop
-                if d100()[0] <= BASE_AI_EMPIRE_ATTACK_CHANCE_OUT_OF_100:
-                    attack(viable_target)
+            if is_viable_target(viable_target) and will_attack(): # is_viable_target() can change throughout the loop
+                attack(viable_target)
         for rear_system in rear_systems:
             activate_reserves(rear_system)
 

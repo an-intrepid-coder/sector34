@@ -9,7 +9,7 @@ from faction import Faction
 from faction_type import FactionType, faction_type_to_color, ai_empire_faction_types
 from fleet import Fleet
 from console import ConsoleLog
-from utility import d20, d100
+from utility import d20, d100, xthify, phonetic_index, prefix_system_names, secondary_system_names, click_and_drag_rect
 from pygame.math import Vector2
 from random import shuffle, randint, choice
 from math import ceil
@@ -26,6 +26,11 @@ class Game:
         self.running = True
         self.star_map = StarMap(self.debug_mode)
         self.hard_mode = False
+        self.close_battles_toggle = False
+        self.political_map_toggle = False
+        self.drag_start = None
+        self.drag_end = None
+        self.multiple_locs_selected = []
 
         self.ai_factions = []
         for fac in ai_empire_faction_types:
@@ -231,7 +236,7 @@ class Game:
         def spawn_reenforcements():
             for loc in self.star_map.locations:
                 if loc.will_spawn_reenforcements(self.hard_mode):
-                    if loc.faction_type == FactionType.PLAYER:
+                    if loc.faction_type == FactionType.PLAYER and d100()[0] <= DEFAULT_PLAYER_REENFORCEMENT_POOL_CHANCE_OUT_OF_100:
                         self.player_reenforcement_pool += 1
                     else:
                         loc.ships += 1
@@ -241,190 +246,248 @@ class Game:
         # For now, there are no deep space interceptions
         # Friendly arrivals disembark at the destination
         def resolve_fleet_arrivals():
-            for fleet in self.star_map.deployed_fleets:
-                for loc in self.star_map.locations:
-                    # Handle fleets bringing reenforcements to a system:
-                    if fleet.pos == fleet.destination.pos == loc.pos and fleet.faction_type == loc.faction_type and fleet.faction_type != FactionType.PIRATES:
-                        loc.ships += fleet.ships
-                        if fleet is self.selected_fleet:
-                            self.selected_fleet = None
-                        self.star_map.remove_fleet(fleet)
-                        # Handle fleets entering combat in a system:
-                    elif fleet.pos == fleet.destination.pos == loc.pos and (
-                            fleet.faction_type == FactionType.PIRATES or fleet.faction_type != loc.faction_type):
-                        # A combat begins
-                        attackers = fleet.ships
-                        attacker_faction = fleet.faction_type
-                        attacker_name = fleet.name
-                        defenders = loc.ships
-                        defender_faction = loc.faction_type
-                        fighting = True
-                        retreating = False
-                        attackers_won = False
-                        defenders_won = False
-                        attackers_losses = 0
-                        defenders_losses = 0
-                        rounds = 1
-                        tactical_battle = TacticalBattle(loc, attacker_faction, defender_faction, attackers, defenders)
-                        tactical_battle.starfield = loc.starfield
-                        last_stand = False
-                        if attackers > defenders and d100()[0] <= LAST_STAND_CHANCE_OUT_OF_100:
-                            last_stand = True
-                            tactical_battle.last_stand = True
-                        charge = False
-                        if defenders > attackers and d100()[0] <= CHARGE_CHANCE_OUT_OF_100:
-                            charge = True
-                            tactical_battle.charge = True
-                        while fighting:
-                            attacker_round_losses = 0
-                            defender_round_losses = 0
-                            attacker_bonus = 0
-                            if charge:
-                                attacker_bonus += CHARGE_D20_BONUS
-                            if d100()[0] <= BRILLIANCY_CHANCE_OUT_OF_100:
-                                attacker_bonus += BRILLIANCY_BONUS
-                            defender_bonus = 0
-                            if last_stand:
-                                defender_bonus += LAST_STAND_D20_BONUS
-                            if d100()[0] <= BRILLIANCY_CHANCE_OUT_OF_100:
-                                defender_bonus += BRILLIANCY_BONUS
-                            # victory check
-                            if attackers <= 0 or defenders <= 0:
-                                break
-                            # calculate fleet widths and bonuses
-                            if attackers > defenders:
-                                outnumber_margin = int((attackers - defenders) / (defenders * DEFAULT_OUTNUMBER_MARGIN))
-                                attackers_width = DEFAULT_FLEET_WIDTH + outnumber_margin
-                                defenders_width = DEFAULT_FLEET_WIDTH
-                            elif attackers < defenders:
-                                attackers_width = DEFAULT_FLEET_WIDTH
-                                outnumber_margin = int((defenders - attackers) / (attackers * DEFAULT_OUTNUMBER_MARGIN))
-                                defenders_width = DEFAULT_FLEET_WIDTH + outnumber_margin
-                            else:
-                                attackers_width = DEFAULT_FLEET_WIDTH
-                                defenders_width = DEFAULT_FLEET_WIDTH
-                            if attackers < DEFAULT_FLEET_WIDTH:
-                                attackers_width = attackers
-                            if defenders < DEFAULT_FLEET_WIDTH:
-                                defenders_width = defenders
-                            if attackers > defenders:
-                                measure_width = defenders_width
-                            elif attackers < defenders:
-                                measure_width = attackers_width
-                            else:
-                                measure_width = attackers_width
 
-                            # roll for attackers and defenders
-                            attackers_roll = d20(num_dice=attackers_width, bonus=attacker_bonus)
-                            defenders_roll = d20(num_dice=defenders_width, bonus=defender_bonus)
-                            for die in range(measure_width):
-                                if attackers_roll[die] > defenders_roll[die]:
-                                    defenders -= 1
-                                    defenders_losses += 1
-                                    defender_round_losses += 1
-                                else:  # defenders win ties for now
-                                    attackers -= 1
-                                    attackers_losses += 1
-                                    attacker_round_losses += 1
+            def is_valid_reenforcement(fleet, loc):
+                return fleet.arrived() and fleet.faction_type == loc.faction_type and fleet.faction_type != FactionType.PIRATES
 
-                            # calculate retreat chance for attackers
-                            if rounds > 1 and attackers > 0 and not charge:
-                                if attackers < defenders:
-                                    outnumber_margin = (defenders - attackers) // (attackers * DEFAULT_OUTNUMBER_MARGIN)
-                                    retreat_chance_out_of_100 = DEFAULT_RETREAT_CHANCE_OUT_OF_100 * outnumber_margin
-                                    if retreat_chance_out_of_100 > DEFAULT_RETREAT_CHANCE_HARD_CAP:
-                                        retreat_chance_out_of_100 = DEFAULT_RETREAT_CHANCE_HARD_CAP
-                                    if d100()[0] <= retreat_chance_out_of_100:
-                                        nearest_place_to_flee = self.star_map.nearest_friendly_world_to(fleet)
-                                        # If there is nowhere left to retreat to, they'll fight to the death
-                                        if nearest_place_to_flee is not None:
-                                            if nearest_place_to_flee.ly_to(fleet.pos) <= DEFAULT_FUEL_RANGE_LY:
-                                                fighting = False
-                                                retreating = True
-                                                tactical_battle.retreat = True
+            def is_valid_combat(fleet, loc):
+                return fleet.arrived() and (fleet.faction_type == FactionType.PIRATES or fleet.faction_type != loc.faction_type)
 
-                            tactical_battle.rounds.append(
-                                {"attacker_losses": attacker_round_losses, "defender_losses": defender_round_losses})
+            def is_last_stand(attackers, defenders):
+                defender_faction = loc.faction_type
+                defender_worlds = [i for i in filter(lambda x: x.faction_type == defender_faction, self.star_map.locations)]
+                last_world = len(defender_worlds) == 1
+                return (attackers > defenders and d100()[0] <= LAST_STAND_CHANCE_OUT_OF_100) or last_world
 
-                            rounds += 1
+            def is_charge(attackers, defenders):
+                nearby_friendly_worlds = [i for i in filter(lambda x: x.faction_type == fleet.faction_type, self.star_map.systems_in_range_of(loc))]
+                nowhere_to_flee = len(nearby_friendly_worlds) == 0
+                return (defenders > attackers and d100()[0] <= CHARGE_CHANCE_OUT_OF_100) or nowhere_to_flee
 
-                        # Handle the effects of the battle
-                        if attackers > 0 >= defenders:
-                            tactical_battle.winner = attacker_faction
-                            loc.faction_type = fleet.faction_type
-                            loc.ships = attackers
-                            if fleet == self.selected_fleet:
-                                self.selected_fleet = None
-                            self.star_map.remove_fleet(fleet)
-                            attackers_won = True
-                            if attacker_faction == FactionType.PIRATES:
-                                self.all_pirates_destroyed = False
-                        elif attackers <= 0:
-                            tactical_battle.winner = defender_faction
-                            loc.ships = defenders
-                            if fleet == self.selected_fleet:
-                                self.selected_fleet = None
-                            self.star_map.remove_fleet(fleet)
-                            defenders_won = True
-                            if defender_faction == FactionType.PIRATES:
-                                self.all_pirates_destroyed = False
+            def is_brilliancy():
+                return d100()[0] <= BRILLIANCY_CHANCE_OUT_OF_100
 
-                        # Handle retreats
-                        if retreating:
-                            tactical_battle.winner = defender_faction
-                            loc.ships = defenders
-                            fleet.ships = attackers
-                            defenders_won = True
-                            retreating_to = self.star_map.nearest_friendly_world_to(fleet)
-                            if fleet.faction_type == FactionType.PIRATES:
-                                retreating_to = self.star_map.nearest_vulnerable_world_to(fleet)
-                            if retreating_to is None:
-                                self.star_map.remove_fleet(fleet)
-                                retreating = False
-                            else:
-                                fleet.destination = retreating_to
+            def battle_over(attackers, defenders):
+                return attackers <= 0 or defenders <= 0
 
-                        # Handle output if player involved or can witness
-                        if attacker_faction == FactionType.PLAYER or defender_faction == FactionType.PLAYER:
+            def get_outnumber_margin(more, less): 
+                outnumber_margin = 0             
+                count = 1
+                while True:
+                    if more >= less * BASE_OUTNUMBER_MARGIN * count:
+                        outnumber_margin += 1
+                        count += 1
+                    else:
+                        break
+                return outnumber_margin
+
+            def fleet_widths(attackers, defenders):
+                nonlocal get_outnumber_margin
+                if attackers > defenders: 
+                    outnumber_margin = get_outnumber_margin(attackers, defenders)
+                    attackers_width = DEFAULT_FLEET_WIDTH + outnumber_margin
+                    defenders_width = DEFAULT_FLEET_WIDTH
+                elif attackers < defenders:
+                    outnumber_margin = get_outnumber_margin(defenders, attackers)
+                    attackers_width = DEFAULT_FLEET_WIDTH
+                    defenders_width = DEFAULT_FLEET_WIDTH + outnumber_margin
+                else:
+                    attackers_width = DEFAULT_FLEET_WIDTH
+                    defenders_width = DEFAULT_FLEET_WIDTH
+                if attackers < DEFAULT_FLEET_WIDTH:
+                    attackers_width = attackers
+                if defenders < DEFAULT_FLEET_WIDTH:
+                    defenders_width = defenders
+                return (attackers_width, defenders_width)
+
+            def might_retreat(rounds, attackers, defenders, charge):
+                return rounds > 1 and attackers > 0 and not charge and attackers < defenders
+
+            def will_retreat(attackers, defenders):
+                nonlocal get_outnumber_margin
+                outnumber_margin = get_outnumber_margin(defenders, attackers)
+                retreat_chance_out_of_100 = DEFAULT_RETREAT_CHANCE_OUT_OF_100 * outnumber_margin
+                if retreat_chance_out_of_100 > DEFAULT_RETREAT_CHANCE_HARD_CAP:
+                    retreat_chance_out_of_100 = DEFAULT_RETREAT_CHANCE_HARD_CAP
+                if d100()[0] <= retreat_chance_out_of_100:
+                    return True
+                return False
+
+            def can_retreat():
+                nearest_place_to_flee = self.star_map.nearest_friendly_world_to(fleet)
+                if nearest_place_to_flee is not None:
+                    if nearest_place_to_flee.ly_to(fleet.pos) <= DEFAULT_FUEL_RANGE_LY:
+                        return True
+                return False
+
+            def is_retreat(rounds, attackers, defenders, charge): 
+                return might_retreat(rounds, attackers, defenders, charge) and will_retreat(attackers, defenders) and can_retreat()
+
+            def push_battle_results_to_console(loc, fleet_name, attackers_won, defenders_won, attacker_faction, defender_faction, retreat, attackers_losses, defenders_losses, rounds):
+                attacker_name = self.star_map.faction_names[attacker_faction]
+                if not (attacker_faction == FactionType.PLAYER or defender_faction == FactionType.PLAYER):
+                    return 
+                defensive_total_victory = defenders_won and not retreat
+                if attackers_won:
+                    self.console.push("{} of {} conquered {} (losses: {} atk / {} def, {} rounds)".format(fleet_name, attacker_name, loc.name, attackers_losses, defenders_losses, rounds))
+                elif defensive_total_victory:
+                    self.console.push("defenders of {} destroyed {} from {} (losses: {} atk / {} def; {} rounds)".format(loc.name, fleet_name, attacker_name, attackers_losses, defenders_losses, rounds))
+                else:
+                    self.console.push("defenders of {} forced {} from {} to retreat (losses: {} atk / {} def; {} rounds)".format(loc.name, fleet_name, attacker_name, attackers_losses, defenders_losses, rounds))
+
+            def effects_of_battle_on_game_state(attackers, defenders, tactical_battle, loc, fleet, retreating, attackers_losses, defenders_losses, rounds):  
+                attacker_faction = fleet.faction_type
+                defender_faction = loc.faction_type
+                attacker_name = fleet.name
+                attackers_won = False
+                defenders_won = False
+                retreating = retreating
+                if attackers > 0 >= defenders: 
+                    # Attackers won:
+                    tactical_battle.winner = attacker_faction
+                    loc.faction_type = fleet.faction_type
+                    loc.ships = attackers
+                    if fleet == self.selected_fleet:
+                        self.selected_fleet = None 
+                    fleet.to_be_removed = True
+                    attackers_won = True
+                    if attacker_faction == FactionType.PIRATES:
+                        self.all_pirates_destroyed = False
+                elif attackers <= 0:
+                    # defenders won without a retreat
+                    tactical_battle.winner = defender_faction
+                    loc.ships = defenders
+                    if fleet == self.selected_fleet:
+                        self.selected_fleet = None
+                    fleet.to_be_removed = True
+                    defenders_won = True
+                    if defender_faction == FactionType.PIRATES:
+                        self.all_pirates_destroyed = False
+
+                # Handle retreats
+                if retreating: 
+                    tactical_battle.winner = defender_faction
+                    loc.ships = defenders
+                    fleet.ships = attackers
+                    retreating_to = self.star_map.nearest_friendly_world_to(fleet)
+                    if fleet.faction_type == FactionType.PIRATES:
+                        retreating_to = self.star_map.nearest_vulnerable_world_to(fleet)
+                    if retreating_to is None:
+                        fleet.to_be_removed = True
+                    else:
+                        fleet.destination = retreating_to
+
+                # Handle output if player involved
+                push_battle_results_to_console(loc, attacker_name, attackers_won, defenders_won, attacker_faction, defender_faction, retreating, attackers_losses, defenders_losses, rounds)
+
+                # Handle player-specific effects                
+                if attacker_faction == FactionType.PLAYER or defender_faction == FactionType.PLAYER:
+                    if self.close_battles_toggle:
+                        if tactical_battle.is_close_battle():
                             self.tactical_battles.append(tactical_battle)
-                            if attackers_won:
-                                faction_name = self.star_map.faction_names[loc.faction_type]
-                                self.console.push(
-                                    "{} of {} conquered {} (losses: {} atk / {} def, {} rounds)".format(attacker_name,
-                                                                                                        faction_name,
-                                                                                                        loc.name,
-                                                                                                        attackers_losses,
-                                                                                                        defenders_losses,
-                                                                                                        rounds))
-                                if attacker_faction == FactionType.PLAYER:
-                                    self.battles_won += 1
-                                    self.ships_destroyed += defenders_losses
-                                    self.ships_lost += attackers_losses
-                                else:
-                                    self.battles_lost += 1
-                                    self.ships_destroyed += defenders_losses
-                                    self.ships_lost += attackers_losses
+                    else:
+                        self.tactical_battles.append(tactical_battle)
+                    if attackers_won and attacker_faction == FactionType.PLAYER:
+                        self.battles_won += 1
+                        self.ships_destroyed += defenders_losses
+                        self.ships_lost += attackers_losses
+                    else:
+                        self.battles_lost += 1
+                        self.ships_destroyed += defenders_losses
+                        self.ships_lost += attackers_losses
 
-                            elif defenders_won:
-                                faction_name = self.star_map.faction_names[attacker_faction]
-                                if defender_faction == FactionType.PLAYER:
-                                    self.battles_won += 1
-                                    self.ships_destroyed += attackers_losses
-                                    self.ships_lost += defenders_losses
-                                else:
-                                    self.battles_lost += 1
-                                    self.ships_destroyed += attackers_losses
-                                    self.ships_lost += defenders_losses
-                                if retreating:
-                                    self.console.push(
-                                        "defenders of {} caused {} from {} to retreat (losses: {} atk / {} def; {} rounds)".format(
-                                            loc.name, fleet.name, faction_name, attackers_losses,
-                                            defenders_losses, rounds))
-                                else:
-                                    self.console.push(
-                                        "defenders of {} destroyed {} from {} (losses: {} atk / {} def; {} rounds)".format(
-                                            loc.name, attacker_name, faction_name, attackers_losses,
-                                            defenders_losses, rounds))
+            def handle_reenforcement(fleet, loc):
+                loc.ships += fleet.ships
+                if fleet is self.selected_fleet:
+                    self.selected_fleet = None
+                fleet.to_be_removed = True
+
+            def handle_combat(fleet, loc):
+                # A combat begins
+                attackers = fleet.ships
+                attacker_faction = fleet.faction_type
+                defenders = loc.ships
+                defender_faction = loc.faction_type
+                fighting = True
+                retreating = False
+                attackers_losses = 0
+                defenders_losses = 0
+                rounds = 1
+                tactical_battle = TacticalBattle(fleet, loc, attacker_faction, defender_faction, attackers, defenders)
+                tactical_battle.battle_number = loc.battles
+                tactical_battle.starfield = loc.starfield
+                last_stand = is_last_stand(attackers, defenders)
+                if last_stand:
+                    tactical_battle.last_stand = True 
+                charge = is_charge(attackers, defenders)
+                if charge:
+                    tactical_battle.charge = True
+                while fighting:
+                    attacker_round_losses = 0
+                    defender_round_losses = 0
+                    attacker_bonus = 0
+                    if charge:
+                        attacker_bonus += CHARGE_D20_BONUS
+                    if is_brilliancy():
+                        attacker_bonus += BRILLIANCY_BONUS
+                    defender_bonus = 0
+                    if last_stand:
+                        defender_bonus += LAST_STAND_D20_BONUS
+                    if is_brilliancy():
+                        defender_bonus += BRILLIANCY_BONUS
+                    # end of battle check
+                    if battle_over(attackers, defenders):
+                        break
+                    # calculate fleet widths and bonuses
+                    attackers_width, defenders_width = fleet_widths(attackers, defenders)
+                    measure_width = min(attackers_width, defenders_width)
+
+                    # roll for attackers and defenders
+                    attackers_roll = d20(num_dice=attackers_width, bonus=attacker_bonus)
+                    defenders_roll = d20(num_dice=defenders_width, bonus=defender_bonus)
+                    for die in range(measure_width): 
+                        if attackers_roll[die] > defenders_roll[die]:
+                            defenders -= 1
+                            defenders_losses += 1
+                            defender_round_losses += 1
+                        else:  # defenders win ties for now
+                            attackers -= 1
+                            attackers_losses += 1
+                            attacker_round_losses += 1
+
+                    # Handle potential retreats
+                    if is_retreat(rounds, attackers, defenders, charge):
+                        fighting = False
+                        retreating = True
+                        tactical_battle.retreat = True
+
+                    tactical_battle.rounds.append({"attacker_losses": attacker_round_losses, "defender_losses": defender_round_losses})
+
+                    rounds += 1
+
+                # Handle the effects of the battle
+                effects_of_battle_on_game_state(attackers, defenders, tactical_battle, loc, fleet, retreating, attackers_losses, defenders_losses, rounds)
+
+            for fleet in self.star_map.deployed_fleets: 
+                loc = fleet.destination
+                if is_valid_reenforcement(fleet, loc): 
+                    handle_reenforcement(fleet, loc)
+                elif is_valid_combat(fleet, loc): 
+                    handle_combat(fleet, loc)
+                    if loc.faction_type == FactionType.PLAYER or fleet.faction_type == FactionType.PLAYER:
+                        loc.battles += 1
+
+        def remove_fleets():
+            hits = False
+            while True:
+                hits = False
+                for fleet in self.star_map.deployed_fleets:
+                    if fleet.to_be_removed:
+                        hits = True
+                        self.star_map.remove_fleet(fleet)
+                        break
+                if not hits:
+                    break
 
         def check_end_turn_clicks(pos):  
             if self.end_turn_button.clicked(pos):
@@ -435,7 +498,22 @@ class Game:
         def check_location_clicks(pos):
             for loc in self.star_map.locations:
                 if loc.clicked(pos):
-                    if self.deploy_mode and self.deploy_amount > 0:
+                    if self.deploy_mode and len(self.multiple_locs_selected) > 1:
+                        valid_deployments = []
+                        for source in self.multiple_locs_selected:
+                            distance = Vector2(loc.pos).distance_to(source.pos) / LY
+                            if distance <= DEFAULT_FUEL_RANGE_LY and source.ships > 1:
+                                valid_deployments.append(source)
+                        if len(valid_deployments) > 0:
+                            num_ships = sum([i for i in map(lambda x: x.ships - 1, valid_deployments)])
+                            self.console.push(
+                                "Deploying {} ships to {}".format(num_ships, loc.name))
+                            for source in valid_deployments: # TODO: Some pop-ups which allow +/- on each selected source
+                                self.star_map.deploy_fleet(source, loc, source.ships - 1)
+                            self.deploy_mode = False
+                            self.display_changed = True
+                            self.multiple_locs_selected = []
+                    elif self.deploy_mode and self.deploy_amount > 0:
                         if not loc.pos == self.selected_system.pos:
                             distance = Vector2(loc.pos).distance_to(self.selected_system.pos) / LY
                             if distance <= DEFAULT_FUEL_RANGE_LY:
@@ -467,6 +545,7 @@ class Game:
                         self.selected_system = loc
                         self.deploy_amount = 0
                         self.display_changed = True
+                        self.multiple_locs_selected = []
                         break
 
         def check_reenforce_button_clicks(pos, shift, ctrl):
@@ -500,7 +579,14 @@ class Game:
                 self.console.push("DEPLOY MODE: Select target")
                 self.deploy_mode = True
                 self.display_changed = True
-                self.can_deploy_to = [i for i in filter(lambda x: x.ly_to(self.selected_system.pos) <= DEFAULT_FUEL_RANGE_LY, self.star_map.locations)]
+                if len(self.multiple_locs_selected) > 0:
+                    self.can_deploy_to = []
+                    for source in self.multiple_locs_selected:
+                        for loc in self.star_map.locations:
+                            if loc.ly_to(source.pos) <= DEFAULT_FUEL_RANGE_LY:
+                                self.can_deploy_to.append(loc)
+                else:
+                    self.can_deploy_to = [i for i in filter(lambda x: x.ly_to(self.selected_system.pos) <= DEFAULT_FUEL_RANGE_LY, self.star_map.locations)]
 
             elif self.deploy_up_button.clicked(pos) and self.selected_system.faction_type == FactionType.PLAYER:
                 if not (shift or ctrl) and self.deploy_amount < self.selected_system.ships - 1:
@@ -532,17 +618,17 @@ class Game:
                     self.display_changed = True
                     break
 
-        def draw_eta_line():  
+        def draw_eta_line(start, end):  
             # Display ETA line
-            color = COLOR_SENSOR
-            pygame.draw.line(self.screen, color, self.selected_system.pos, self.eta_line_target.pos,
-                             FLEET_ETA_LINE_WIDTH)
-            eta = ceil(self.selected_system.ly_to(self.eta_line_target.pos) / DEFAULT_SPEED_LY)
-            text = "{} TURNS".format(eta)
-            font = pygame.font.Font(FONT_PATH, ETA_LINE_FONT_SIZE)
-            surface = font.render(text, True, COLOR_FUEL_RANGE)
-            pos = (self.eta_line_target.pos[0], self.eta_line_target.pos[1] - surface.get_height())
-            self.screen.blit(surface, pos)
+            if start.pos != end.pos:
+                color = COLOR_SENSOR
+                pygame.draw.line(self.screen, color, start.pos, end.pos, FLEET_ETA_LINE_WIDTH)
+                eta = start.get_eta_to(end.pos)
+                text = "{} TURNS".format(eta)
+                font = pygame.font.Font(FONT_PATH, ETA_LINE_FONT_SIZE)
+                surface = font.render(text, True, COLOR_FUEL_RANGE, "black")
+                pos = (start.pos[0], start.pos[1])
+                self.screen.blit(surface, pos)
 
         def draw_incoming_fleets_overlay(): 
             for fleet in self.star_map.deployed_fleets:
@@ -591,50 +677,92 @@ class Game:
                         radius = (DEFAULT_FLEET_SENSOR_RANGE_LY * LY)
                         pygame.draw.circle(map_surface, "black", fleet.pos, radius)
 
-                # display star systems and garrisoned fleets:
-                font = pygame.font.Font(FONT_PATH, STAR_SYSTEM_FONT_SIZE)
-                for loc in self.star_map.locations:
-                    if loc.locationType == LocationType.STAR_SYSTEM:
-                        if loc.in_sensor_view:
-                            pygame.draw.circle(map_surface, faction_type_to_color(loc.faction_type), loc.pos, STAR_RADIUS_PX, STAR_SYSTEM_LINE_WIDTH_PX)
-                            text = None
-                            if self.system_strength_overlay_mode:
-                                text = "{}".format(loc.ships)
-                            elif self.sensor_range_overlay_mode:
-                                text = "{} LY".format(loc.sensor_range)
-                            elif self.reenforcement_chance_overlay_mode:
-                                text = "{}%".format(loc.reenforce_chance_out_of_100)
-                            text = font.render(text, True, "white")
-                            pos = (loc.pos[0] - text.get_width() / 2, loc.pos[1] - text.get_height() / 2)
-                            map_surface.blit(text, pos)
-                        else:
-                            pygame.draw.circle(map_surface, "white", loc.pos, STAR_RADIUS_PX)
+                # Draw the political map, if toggled
+                if self.political_map_toggle:
+                    cells_wide = MAP_WIDTH_PX // PARTITION_GRID_SIDE
+                    cells_high = MAP_HEIGHT_PX // PARTITION_GRID_SIDE
+                    for x in range(cells_wide):
+                        for y in range(cells_high):
+                            rect = (x * PARTITION_GRID_SIDE, y * PARTITION_GRID_SIDE, PARTITION_GRID_SIDE, PARTITION_GRID_SIDE)
+                            local_system = [i for i in filter(lambda s: s.grid_pos == (x, y), self.star_map.locations)][0]
+                            split = local_system.name.split(" ")
+                            new_label = []
+                            for part in split:
+                                if part in prefix_system_names or part in secondary_system_names:
+                                    new_label.append("{}.".format(part[0]))
+                                else:
+                                    new_label.append(part)
+                            label_text = ""
+                            index = 0
+                            for part in new_label:
+                                label_text += part
+                                if index < len(new_label):
+                                    label_text += " "
+                                index += 1
+                            font = pygame.font.Font(FONT_PATH, POLITICAL_MAP_FONT_SIZE) 
+                            label = font.render(label_text, True, "green", "black")
+                            if local_system.in_sensor_view or self.debug_mode:
+                                color = faction_type_to_color(local_system.faction_type)
+                                pygame.draw.rect(map_surface, color, rect)
+                            else:
+                                pygame.draw.rect(map_surface, COLOR_FOG, rect)
+                            pygame.draw.rect(map_surface, "black", rect, 1)
+                            label_x = x * PARTITION_GRID_SIDE + PARTITION_GRID_SIDE / 2 - label.get_width() / 2
+                            label_y = y * PARTITION_GRID_SIDE + PARTITION_GRID_SIDE / 2 - label.get_height() / 2
+                            map_surface.blit(label, (label_x, label_y))
 
-                # display deployed fleets:
-                for fleet in self.star_map.deployed_fleets:
-                    if fleet.in_sensor_view:
-                        pygame.draw.line(map_surface, (200, 200, 255), fleet.pos, fleet.destination.pos)
-                        top = (fleet.pos[0], fleet.pos[1] - STAR_RADIUS_PX)
-                        bottom = (fleet.pos[0], fleet.pos[1] + STAR_RADIUS_PX)
-                        right = (fleet.pos[0] + STAR_RADIUS_PX, fleet.pos[1])
-                        left = (fleet.pos[0] - STAR_RADIUS_PX, fleet.pos[1])
-                        pygame.draw.polygon(map_surface, faction_type_to_color(fleet.faction_type), (top, right, bottom, left), 1)
-                        fleet_size_text = font.render("{}".format(fleet.ships), True, "white")
-                        pos = (
-                            fleet.pos[0] - fleet_size_text.get_width() / 2,
-                            fleet.pos[1] - fleet_size_text.get_height() / 2)
-                        map_surface.blit(fleet_size_text, pos)
+                if not self.political_map_toggle:
+                    # display star systems and garrisoned fleets:
+                    font = pygame.font.Font(FONT_PATH, STAR_SYSTEM_FONT_SIZE)
+                    for loc in self.star_map.locations:
+                        if loc.locationType == LocationType.STAR_SYSTEM:
+                            if loc.in_sensor_view:
+                                if loc == self.selected_system or loc in self.multiple_locs_selected:
+                                    pygame.draw.circle(map_surface, COLOR_SELECTION, loc.pos, SELECTION_RADIUS_PX, SELECTION_CIRCLE_WIDTH_PX)
+                                pygame.draw.circle(map_surface, faction_type_to_color(loc.faction_type), loc.pos, STAR_RADIUS_PX, STAR_SYSTEM_LINE_WIDTH_PX)
+                                text = None
+                                if self.system_strength_overlay_mode:
+                                    text = "{}".format(loc.ships)
+                                elif self.sensor_range_overlay_mode:
+                                    text = "{} LY".format(loc.sensor_range)
+                                elif self.reenforcement_chance_overlay_mode:
+                                    text = "{}%".format(loc.reenforce_chance_out_of_100)
+                                text = font.render(text, True, "white")
+                                pos = (loc.pos[0] - text.get_width() / 2, loc.pos[1] - text.get_height() / 2)
+                                map_surface.blit(text, pos)
+                            else:
+                                pygame.draw.circle(map_surface, COLOR_FOGGED_STAR, loc.pos, STAR_RADIUS_PX)
 
-                # display fuel range and sensor range for selected system
-                if self.selected_system is not None:
-                    fuel_radius = DEFAULT_FUEL_RANGE_LY * LY
-                    sensor_radius = self.selected_system.sensor_range * LY
-                    pygame.draw.circle(map_surface, COLOR_FUEL_RANGE, self.selected_system.pos, fuel_radius, 1)
-                    pygame.draw.circle(map_surface, COLOR_SENSOR, self.selected_system.pos, sensor_radius, 1)
-                # display sensor range for selected fleet
-                if self.selected_fleet is not None:
-                    sensor_radius = DEFAULT_FLEET_SENSOR_RANGE_LY * LY
-                    pygame.draw.circle(map_surface, COLOR_SENSOR, self.selected_fleet.pos, sensor_radius, 1)
+                    # display deployed fleets:
+                    for fleet in self.star_map.deployed_fleets:
+                        if fleet.in_sensor_view:
+                            pygame.draw.line(map_surface, (200, 200, 255), fleet.pos, fleet.destination.pos)
+                            top = (fleet.pos[0], fleet.pos[1] - STAR_RADIUS_PX)
+                            bottom = (fleet.pos[0], fleet.pos[1] + STAR_RADIUS_PX)
+                            right = (fleet.pos[0] + STAR_RADIUS_PX, fleet.pos[1])
+                            left = (fleet.pos[0] - STAR_RADIUS_PX, fleet.pos[1])
+                            pygame.draw.polygon(map_surface, faction_type_to_color(fleet.faction_type), (top, right, bottom, left), 1)
+                            fleet_size_text = font.render("{}".format(fleet.ships), True, "white")
+                            pos = (
+                                fleet.pos[0] - fleet_size_text.get_width() / 2,
+                                fleet.pos[1] - fleet_size_text.get_height() / 2)
+                            map_surface.blit(fleet_size_text, pos)
+
+                    # display fuel range and sensor range for selected system
+                    if self.selected_system is not None:
+                        fuel_radius = DEFAULT_FUEL_RANGE_LY * LY
+                        sensor_radius = self.selected_system.sensor_range * LY
+                        pygame.draw.circle(map_surface, COLOR_FUEL_RANGE, self.selected_system.pos, fuel_radius, 1)
+                        pygame.draw.circle(map_surface, COLOR_SENSOR, self.selected_system.pos, sensor_radius, 1)
+                    # display sensor range for selected fleet
+                    if self.selected_fleet is not None:
+                        sensor_radius = DEFAULT_FLEET_SENSOR_RANGE_LY * LY
+                        pygame.draw.circle(map_surface, COLOR_SENSOR, self.selected_fleet.pos, sensor_radius, 1)
+
+                # Draw click-and-drag box
+                if self.drag_start and self.drag_end:
+                    rect = click_and_drag_rect(self.drag_start, self.drag_end)
+                    pygame.draw.rect(map_surface, COLOR_SENSOR, rect, 1)
 
                 self.screen.blit(map_surface, (0, 0))
 
@@ -672,18 +800,29 @@ class Game:
 
                 if self.selected_system.faction_type == FactionType.PLAYER:
                     # Deploy button
-                    deploy_up_surface = font.render("[+]", True, "green")
-                    hud_surface.blit(deploy_up_surface, (0, (HUD_FONT_SIZE + 1) * 4))
-                    deploy_down_surface = font.render("[-]", True, "green")
-                    hud_surface.blit(deploy_down_surface, (30, (HUD_FONT_SIZE + 1) * 4))
-                    deploy_color = "red"
-                    deploy_surface = font.render(
-                        "{}/{} Deploy!".format(self.deploy_amount, self.selected_system.ships - 1), True, deploy_color)
-                    hud_surface.blit(deploy_surface, (60, (HUD_FONT_SIZE + 1) * 4))
-                    if self.deploy_amount > 0:
-                        rect = (59, (HUD_FONT_SIZE + 1) * 4 - 1, deploy_surface.get_width() + 2,
-                                deploy_surface.get_height() + 2)
-                        pygame.draw.rect(hud_surface, "green", rect, 1)
+                    if len(self.multiple_locs_selected) > 1:
+                        num_ships = sum([i for i in map(lambda x: x.ships - 1, self.multiple_locs_selected)])
+                        deploy_color = "red"
+                        deploy_surface = font.render(
+                            "({}) Deploy Multiple!".format(num_ships), True, deploy_color)
+                        hud_surface.blit(deploy_surface, (60, (HUD_FONT_SIZE + 1) * 4))
+                        if num_ships > 0:
+                            rect = (59, (HUD_FONT_SIZE + 1) * 4 - 1, deploy_surface.get_width() + 2,
+                                    deploy_surface.get_height() + 2)
+                            pygame.draw.rect(hud_surface, "green", rect, 1)
+                    else:
+                        deploy_up_surface = font.render("[+]", True, "green")
+                        hud_surface.blit(deploy_up_surface, (0, (HUD_FONT_SIZE + 1) * 4))
+                        deploy_down_surface = font.render("[-]", True, "green")
+                        hud_surface.blit(deploy_down_surface, (30, (HUD_FONT_SIZE + 1) * 4))
+                        deploy_color = "red"
+                        deploy_surface = font.render(
+                            "{}/{} Deploy!".format(self.deploy_amount, self.selected_system.ships - 1), True, deploy_color)
+                        hud_surface.blit(deploy_surface, (60, (HUD_FONT_SIZE + 1) * 4))
+                        if self.deploy_amount > 0:
+                            rect = (59, (HUD_FONT_SIZE + 1) * 4 - 1, deploy_surface.get_width() + 2,
+                                    deploy_surface.get_height() + 2)
+                            pygame.draw.rect(hud_surface, "green", rect, 1)
 
                 # Reenforce button
                 reenforce_up_surface = font.render("[+]", True, "green")
@@ -841,7 +980,7 @@ class Game:
                 pygame.draw.rect(hud_surface, "red", (0, 0, HUD_WIDTH_PX, HUD_HEIGHT_PX), 1)
                 self.screen.blit(hud_surface, (MAP_WIDTH_PX, 0))
 
-            def draw_console():
+            def draw_console(): # TODO: Scrolling console
                 console_surface = pygame.Surface((CONSOLE_WIDTH_PX, CONSOLE_HEIGHT_PX))
                 pygame.draw.rect(console_surface, "green", (0, 0, CONSOLE_WIDTH_PX, CONSOLE_HEIGHT_PX), 1)
                 font = pygame.font.Font(FONT_PATH, CONSOLE_FONT_SIZE)
@@ -876,8 +1015,13 @@ class Game:
                 victory_splash()
 
             # Draw deploy mode ETA hover lines
-            if self.deploy_mode and self.eta_line_mode:
-                draw_eta_line() 
+            if self.deploy_mode and self.eta_line_mode: 
+                if len(self.multiple_locs_selected) > 0:
+                    for loc in self.multiple_locs_selected:
+                        if loc.ly_to(self.eta_line_target.pos) <= DEFAULT_FUEL_RANGE_LY:
+                            draw_eta_line(loc, self.eta_line_target) 
+                else:
+                    draw_eta_line(self.selected_system, self.eta_line_target) 
 
             if self.incoming_fleets_overlay_mode:
                 draw_incoming_fleets_overlay()  
@@ -888,16 +1032,15 @@ class Game:
             self.display_changed = False
             pygame.display.flip()
 
-        def eta_line_check(pos): 
+        def eta_line_check(pos):  
             found = False
             for loc in self.can_deploy_to: 
-                if loc is not self.selected_system:
-                    if loc.clicked(pos):
-                        self.eta_line_mode = True
-                        self.eta_line_target = loc
-                        self.display_changed = True
-                        found = True
-                        break
+                if loc.clicked(pos):
+                    self.eta_line_mode = True
+                    self.eta_line_target = loc
+                    self.display_changed = True
+                    found = True
+                    break
             if not found and self.eta_line_mode:
                 self.eta_line_mode = False
                 self.display_changed = True 
@@ -960,13 +1103,36 @@ class Game:
                 fleet = Fleet(self.star_map.name_a_fleet(FactionType.PIRATES), pos, FactionType.PIRATES, num_ships, target)
                 self.star_map.deployed_fleets.append(fleet)
 
+        def watch_mode_check():
+            if self.watch_mode:
+                self.watch_timer += 1
+                if self.watch_timer == WATCH_TIMER_RATE:
+                    self.watch_timer = 0
+                    self.turn_processing_mode = True
+
         def strategic_mode():
             # handle events
             for event in pygame.event.get():
                 if event.type == QUIT:
                     # quit game:
                     self.running = False
+                if event.type == MOUSEBUTTONDOWN and not self.turn_processing_mode:
+                    if not self.drag_start:
+                        self.drag_start = pygame.mouse.get_pos()
                 elif event.type == MOUSEBUTTONUP and not self.turn_processing_mode:
+                    # drag-selected locations
+                    if self.drag_start and self.drag_end:
+                        self.multiple_locs_selected = []
+                        selection_rect = pygame.Rect(click_and_drag_rect(self.drag_start, self.drag_end))
+                        for loc in self.star_map.locations:
+                            if loc.faction_type == FactionType.PLAYER and selection_rect.contains(((loc.pos), (0, 0))):
+                                self.multiple_locs_selected.append(loc)
+                        if len(self.multiple_locs_selected) > 0:
+                            self.selected_system = self.multiple_locs_selected[0]
+                    self.drag_start = None
+                    self.drag_end = None
+                    self.display_changed = True
+                    # TODO: Maybe something for drag-selected fleets, too
                     # Mouse clicks
                     shift = pygame.key.get_pressed()[K_LSHIFT] or pygame.key.get_pressed()[K_RSHIFT]
                     ctrl = pygame.key.get_pressed()[K_LCTRL] or pygame.key.get_pressed()[K_RCTRL]
@@ -1013,27 +1179,39 @@ class Game:
                         self.debug_mode = not self.debug_mode
                         self.console.push("Debug Mode: {}".format(self.debug_mode))
                         self.display_changed = True
+                    elif pygame.key.get_pressed()[K_p]:
+                        self.political_map_toggle = not self.political_map_toggle
+                        self.console.push("Political Map View: {}".format(self.political_map_toggle))
+                        self.display_changed = True
                     elif pygame.key.get_pressed()[K_h] and shift and ctrl:
                         self.hard_mode = not self.hard_mode
                         self.console.push("Hard Mode: {}".format(self.hard_mode))
+                        self.display_changed = True
+                    elif pygame.key.get_pressed()[K_c] and shift and ctrl:
+                        self.close_battles_toggle = not self.close_battles_toggle
+                        self.console.push("Watching Close Battles Only: {}".format(self.close_battles_toggle))
                         self.display_changed = True
                 elif event.type == MOUSEMOTION and not self.turn_processing_mode:
                     rel = pygame.mouse.get_rel()
                     if rel != (0, 0): # Avoid "very small" mouse movement detection distances
                         pos = pygame.mouse.get_pos()
+                        # Click-and-drag box
+                        if self.drag_start:
+                            self.drag_end = pos
+                            self.display_changed = True
                         # ETA Line Hover Checks
                         if self.deploy_mode:
                             eta_line_check(pos)
                             self.mouse_last = pos  
-                        # Additional strat-mode hover logic TODO
             
             # Handle processing between turns
             game_on = not (self.game_over_mode or self.victory_mode)
             if self.turn_processing_mode and game_on:
                 draw_processing_blurb()
-                off_map_pirate_raid_check() # TODO
+                off_map_pirate_raid_check() 
                 update_fleets()
                 resolve_fleet_arrivals()
+                remove_fleets()
                 spawn_reenforcements()
                 run_ai_behavior()
                 game_over_check()
@@ -1043,6 +1221,8 @@ class Game:
                 self.reenforce_amount = 0
                 self.turn_processing_mode = False
                 self.display_changed = True
+            elif game_on:
+                watch_mode_check()
 
             # Draw main display if it has changed
             if self.display_changed:
@@ -1053,14 +1233,14 @@ class Game:
             attacker_faction_name = self.star_map.faction_names[battle.attacker_faction]
             defender_faction_name = self.star_map.faction_names[battle.defender_faction]
             font = pygame.font.Font(FONT_PATH, TACTICAL_MODE_FONT_SIZE)
-            prompt_text = font.render("{} ({} ships) vs {} ({} ships) at {}  | <SPACE to skip battle>".format(attacker_faction_name, battle.attacker_ships, defender_faction_name, battle.defender_ships, battle.location.name), True, "green", "black")
+            prompt_text = font.render("{} ({} ships) vs {} ({} ships) <{} battle of {}> <SPACE to skip battle>".format(attacker_faction_name, battle.attacker_ships, defender_faction_name, battle.defender_ships, xthify(battle.battle_number + 1), battle.location.name), True, "green", "black")
             end_font = pygame.font.Font(FONT_PATH, TACTICAL_BATTLE_RESULT_FONT_SIZE)
             if battle.attacker_faction == battle.winner:
-                victory_text = end_font.render("{} lost fleet defending {}".format(defender_faction_name, battle.location.name), True, "green", "black")
+                victory_text = end_font.render("{} lost {} defending {}".format(defender_faction_name, battle.fleet.name, battle.location.name), True, "green", "black")
             elif battle.retreat:
-                victory_text = end_font.render("Fleet from {} retreats in defeat from {}.".format(attacker_faction_name, battle.location.name), True, "green", "black")
+                victory_text = end_font.render("{} from {} retreats in defeat from {}.".format(battle.fleet.name, attacker_faction_name, battle.location.name), True, "green", "black")
             else:
-                victory_text = end_font.render("Fleet from {} destroyed assaulting {}".format(attacker_faction_name, battle.location.name), True, "green", "black")
+                victory_text = end_font.render("{} from {} destroyed assaulting {}".format(battle.fleet.name, attacker_faction_name, battle.location.name), True, "green", "black")
 
             def draw_tactical_mode():
                 self.screen.blit(battle.starfield, (0, 0))
@@ -1142,18 +1322,10 @@ class Game:
                 self.tactical_battle_over = False
                 self.display_changed = True
 
-        def watch_mode_check():
-            if self.watch_mode:
-                self.watch_timer += 1
-                if self.watch_timer == WATCH_TIMER_RATE:
-                    self.watch_timer = 0
-                    self.turn_processing_mode = True
-
         # Game loop
         self.display_changed = True
         draw_display()
         while self.running:
-            watch_mode_check()
             if len(self.tactical_battles) == 0: 
                 strategic_mode() 
             elif len(self.tactical_battles) > 0: 

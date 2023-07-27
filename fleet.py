@@ -12,10 +12,11 @@ class Fleet(Clickable):
         self.name = name
         self.faction_type = faction_type
         self.ships = ships
-        self.destination = destination
+        self.destination = destination # TODO: a waypoint system
         self.speed = speed
         self.in_sensor_view = False
         self.sensor_range = DEFAULT_FLEET_SENSOR_RANGE_LY
+        self.to_be_removed = False
 
     # Moves the fleet LY * speed towards its destination
     def move(self):
@@ -40,3 +41,8 @@ class Fleet(Clickable):
     # star systems. For now.
     def in_range(self, pos):
         return self.clicked(pos)
+
+    def arrived(self):
+        # testing: this likely needs a margin of error? This should be fool-proof...
+        return self.get_eta() < 1
+

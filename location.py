@@ -2,7 +2,7 @@ from constants import *
 from enum import Enum
 from clickable import Clickable
 from random import randint, randrange, choice
-from utility import d100, d20
+from utility import d100, d20, coin_flip
 from pygame.math import Vector2
 from faction_type import FactionType, ai_empire_faction_types
 from math import ceil
@@ -12,8 +12,61 @@ from pygame.math import Vector2
 class LocationType(Enum):
     STAR_SYSTEM = 1
 
+def mountain_color():
+    val = randint(COLOR_MOUNTAINS_MIN, COLOR_MOUNTAINS_MAX)
+    return (val, val, val)
+
+def desert_color(): 
+    r = randint(COLOR_DESERT_MIN, COLOR_DESERT_MAX)
+    g = randint(COLOR_DESERT_MIN, COLOR_DESERT_MAX)
+    b = max(randint(COLOR_DESERT_MIN, COLOR_DESERT_MAX) // 2, 0)
+    return (r, g, b) 
+
+def lush_color():
+    g = randint(COLOR_MOUNTAINS_MIN, COLOR_MOUNTAINS_MAX)
+    return (0, g, 0)
+
+def land_color(): 
+    roll = d100()[0]  # not true mutually exclusive percents, but close enough for what I'm trying to do
+    if roll < SEA_CHANCE_OUT_OF_100:
+        return COLOR_OCEANS
+    if roll < DESERT_CHANCE_OUT_OF_100:
+        return desert_color()
+    elif roll < MOUNTAIN_CHANCE_OUT_OF_100: 
+        return mountain_color()
+    return lush_color()
+
+def star_red(): 
+    r = randint(200, 255)
+    return (r, 0, 0)
+
+def star_orange_or_yellow(): 
+    r = randint(200, 255)
+    g = randint(200, 255)
+    return (r, g, 0)
+
+def star_white(): 
+    return (255, 255, 255)
+
+def star_purple_or_blue(): 
+    if coin_flip():
+        r = randint(100, 150)
+        g = randint(100, 150)
+        return (r, g, 255)
+    else:
+        r = randint(200, 255)
+        b = randint(200, 255)
+        return (r, 0, b)
+
+def random_star_color(): 
+    colors = [star_red, star_orange_or_yellow]
+    if d100()[0] == 1:
+        return star_purple_or_blue()
+    elif d100()[0] <= 10:
+        return star_white()
+    return choice(colors)()
+
 def generate_starfield():
-    local_star_colors = ["red", "purple", "yellow", "orange"]
     starfield_surface = pygame.Surface((SCREEN_WIDTH_PX, SCREEN_HEIGHT_PX))
     # Background stars
     num_stars = int((SCREEN_WIDTH_PX * SCREEN_HEIGHT_PX) * STARFIELD_DENSITY)
@@ -23,12 +76,12 @@ def generate_starfield():
         if d20()[0] <= 1:
             radius = 2
         pygame.draw.circle(starfield_surface, "white", pos, radius)
-    # Up to 2 local stars
+    # Up to 3 local stars
     num_local_stars = randint(1, 2)
     for star in range(num_local_stars):
         star_pos = (randrange(0, SCREEN_WIDTH_PX), randrange(0, SCREEN_HEIGHT_PX))
         star_radius = randint(LOCAL_STAR_MIN_SIZE, LOCAL_STAR_MAX_SIZE)
-        pygame.draw.circle(starfield_surface, choice(local_star_colors), star_pos, star_radius)
+        pygame.draw.circle(starfield_surface, random_star_color(), star_pos, star_radius)
     # The planet itself
     planet_pos = (randrange(0, SCREEN_WIDTH_PX), randrange(0, SCREEN_HEIGHT_PX))
     planet_radius = randint(LOCAL_PLANET_MIN_SIZE, LOCAL_PLANET_MAX_SIZE)
@@ -46,7 +99,7 @@ def generate_starfield():
             if in_circle:
                 points.append((x, y))
         continent_color = randrange(COLOR_CONTINENTS_MIN, COLOR_CONTINENTS_MAX)
-        pygame.draw.polygon(starfield_surface, (0, continent_color, 0), points)
+        pygame.draw.polygon(starfield_surface, land_color(), points)
     # Cloud cover
     num_cloud_px = int(planet_px_rect[2] * planet_px_rect[3] * LOCAL_CLOUD_DENSITY)
     for _ in range(num_cloud_px):
@@ -61,7 +114,7 @@ def generate_starfield():
     return starfield_surface
 
 class Location(Clickable):
-    def __init__(self, name, pos, location_type, faction_type=None, ships=0):
+    def __init__(self, name, pos, location_type, grid_pos, faction_type=None, ships=0):
         hit_box =  (pos[0] - LOCATION_HITBOX_SIDE_PX / 2, pos[1] - LOCATION_HITBOX_SIDE_PX / 2, LOCATION_HITBOX_SIDE_PX, LOCATION_HITBOX_SIDE_PX)
         super().__init__(hit_box)
         self.name = name
@@ -76,6 +129,9 @@ class Location(Clickable):
         self.starfield = generate_starfield()
         self.rallying = False
         self.rally_target = None
+        self.rally_amount = 0
+        self.battles = 0
+        self.grid_pos = grid_pos
 
     def under_threat(self, fleets):
         for fleet in fleets:
