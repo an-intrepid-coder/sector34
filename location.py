@@ -66,10 +66,11 @@ def random_star_color():
         return star_white()
     return choice(colors)()
 
-def generate_starfield():
+def generate_starfield(): # TODO: invaded variant
     starfield_surface = pygame.Surface((SCREEN_WIDTH_PX, SCREEN_HEIGHT_PX))
     # Background stars
     num_stars = int((SCREEN_WIDTH_PX * SCREEN_HEIGHT_PX) * STARFIELD_DENSITY)
+    radius = None
     for _ in range(num_stars):
         pos = (randrange(0, SCREEN_WIDTH_PX), randrange(0, SCREEN_HEIGHT_PX))
         radius = 1
@@ -103,7 +104,7 @@ def generate_starfield():
     # Cloud cover
     num_cloud_px = int(planet_px_rect[2] * planet_px_rect[3] * LOCAL_CLOUD_DENSITY)
     for _ in range(num_cloud_px):
-        radius = 5  # for now
+        radius = CLOUD_RADIUS_PX
         x = randrange(planet_px_rect[0], planet_px_rect[0] + planet_px_rect[2] - radius)
         y = randrange(planet_px_rect[1], planet_px_rect[1] + planet_px_rect[3] - radius)
         in_circle = Vector2((x, y)).distance_to(planet_pos) <= planet_radius
@@ -111,7 +112,7 @@ def generate_starfield():
         if in_circle:
             pygame.draw.circle(starfield_surface, (cloud_color, cloud_color, cloud_color), (x, y), radius)
 
-    return starfield_surface
+    return (starfield_surface, planet_pos, planet_radius)
 
 class Location(Clickable):
     def __init__(self, name, pos, location_type, grid_pos, faction_type=None, ships=0):
@@ -126,12 +127,26 @@ class Location(Clickable):
                                                    DEFAULT_AI_REENFORCE_CHANCE_OUT_OF_100_MAX)
         self.sensor_range = randint(DEFAULT_MIN_SENSOR_RANGE_LY, DEFAULT_MAX_SENSOR_RANGE_LY)
         self.in_sensor_view = False
-        self.starfield = generate_starfield()
+        self.starfield, self.planet_pos, self.planet_radius = generate_starfield()
         self.rallying = False
         self.rally_target = None
         self.rally_amount = 0
         self.battles = 0
         self.grid_pos = grid_pos
+
+    def decimate(self):
+        self.reenforce_chance_out_of_100 = POST_INVASION_REENFORCEMENT_CHANCE
+        colors = [COLOR_FOG, COLOR_FOGGED_STAR, COLOR_DECIMATION_RED, COLOR_DECIMATION_PURPLE, COLOR_DECIMATION_ORANGE]
+        planet_px_rect = (self.planet_pos[0] - self.planet_radius, self.planet_pos[1] - self.planet_radius, self.planet_radius * 2, self.planet_radius * 2)
+        num_cloud_px = int(planet_px_rect[2] * planet_px_rect[3] * DECIMATED_CLOUD_DENSITY)
+        for _ in range(num_cloud_px):
+            radius = CLOUD_RADIUS_PX
+            x = randrange(planet_px_rect[0], planet_px_rect[0] + planet_px_rect[2] - radius)
+            y = randrange(planet_px_rect[1], planet_px_rect[1] + planet_px_rect[3] - radius)
+            in_circle = Vector2((x, y)).distance_to(self.planet_pos) <= self.planet_radius
+            cloud_color = choice(colors)
+            if in_circle:
+                pygame.draw.circle(self.starfield, cloud_color, (x, y), radius)
 
     def under_threat(self, fleets):
         for fleet in fleets:
@@ -142,12 +157,17 @@ class Location(Clickable):
                 return True
         return False
 
-    def will_spawn_reenforcements(self, hard_mode):
+    def will_spawn_reenforcements(self, hard_mode, last_faction_buff): 
+        if self.faction_type == FactionType.EXOGALACTIC_INVASION:
+            # invaders don't spawn reenforcements
+            return False
         if self.faction_type == FactionType.NON_SPACEFARING and self.ships >= NON_SPACEFARING_PRODUCTION_LIMIT_THRESHOLD:
             # Non-FTL factions are not as capable of building up reenforcements
             return d100()[0] <= self.reenforce_chance_out_of_100 // NON_SPACEFARING_PRODUCTION_PENALTY
         elif self.faction_type in ai_empire_faction_types and hard_mode:
             return d100()[0] <= self.reenforce_chance_out_of_100 + HARD_MODE_PRODUCTION_BONUS
+        elif self.faction_type in ai_empire_faction_types and self.faction_type != FactionType.PLAYER and last_faction_buff:
+            return d100()[0] <= self.reenforce_chance_out_of_100 + LAST_FACTION_BUFF_PRODUCTION_BONUS
         else:
             return d100()[0] <= self.reenforce_chance_out_of_100
 

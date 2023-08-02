@@ -29,6 +29,7 @@ class StarMap:
         self.deployed_fleets = []
         self.faction_homeworlds = []
         self.faction_names = {}  
+        self.faction_names[FactionType.EXOGALACTIC_INVASION] = "Invaders"
         self.num_stars = 0
 
         def generate_map(): 
@@ -193,4 +194,16 @@ class StarMap:
             elif loc.ships < weakest.ships:
                 weakest = loc
         return weakest
+
+    def player_is_aware_of(self, pos):
+        # can be seen by any fleet or location owned by the player
+        owned_systems = [i for i in filter(lambda x: x.faction_type == FactionType.PLAYER, self.locations)]
+        for owned_loc in owned_systems:
+            if owned_loc.ly_to(pos) <= owned_loc.sensor_range:
+                return True
+        owned_fleets = [i for i in filter(lambda x: x.faction_type == FactionType.PLAYER, self.deployed_fleets)]
+        for owned_fleet in owned_fleets:
+            if owned_fleet.ly_to(pos) <= owned_fleet.sensor_range:
+                return True
+        return False
 

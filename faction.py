@@ -14,13 +14,16 @@ class Faction:
         self.color = faction_type_to_color(faction_type)
         if faction_type == FactionType.PLAYER:
             self.homeworld = star_map.player_hw
-        else:
+        elif faction_type != FactionType.EXOGALACTIC_INVASION:
             self.homeworld = [i for i in filter(lambda x: x.faction_type == faction_type, star_map.faction_homeworlds)][0]
         self.name = star_map.faction_names[faction_type]
         self.personality_traits = []  # un-implemented, but soon
         self.strategic_objectives = []  # un-implemented, but soon
 
     def run_behavior(self, game):
+        if self.faction_type == FactionType.PLAYER and not game.watch_mode:
+            return
+
         # This function handles all of the logic and action of AI Empire factions,
         # on a turn-by-turn basis.
         # TODO: Diplomacy logic

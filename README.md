@@ -42,6 +42,8 @@
 
 * Ctrl + Shift + D for debug mode. Currently, this disables the fog of war and has no other effect for the player. If you just want to watch the AI play a game, then this is a fun option. Many of the things the AI does are best observed across the whole map, when it has reached critical mass with its forces.
 
+* 'd' by itself, without shift + ctrl, will activate deploy mode for the currently selected systems.
+
 * Ctrl + Shift + H for "hard mode". This gives a flat bonus to AI Empire ship production, to offset the player's ability to pool and bank reenforcements. They will reach critical mass much sooner, and be a much bigger challenge.
 
 * Ctrl + Shift + C to only show battles that are unlikely to be lopsided. This isn't fool-proof, and you'll still get some lopsided ones, but it will filter out most of the lopsided ones in the late game if you're like me and enjoy watching the gratuitous space fights when the fleets get big.
@@ -79,6 +81,8 @@ The AI has come a long ways, and is capable of putting up a good fight now. Stil
 * Local Forces: The vast majority of the sector is home to systems which no longer have the means to travel FTL. They rule their solar systems, and can't leave them. They know of the threats out there (the empire's collapse was not that long ago) and build their fleets, but will only ever use them defensively. At the start of the game these worlds are easy pickings and the player can gobble up a fair number of them without much fear. But their fleets will grow and by the late game they represent serious obstacles. Choose which of these systems to conquer carefully, because they are only cheap conquests at the very beginning of the game. They get a ship production penalty after a certain size, so that they are less of a slog in the end-game, but are still tough early game obstacles and dictate the "terrain" of the map.
 
 * Rapid Expansion: The very first order of business is to secure systems. But don't cut it too close by gambling on risky ventures early, or you might find yourself in a bad way and behind the curve. Select four or five nearby systems in the 20%+ reenforcement chance range to secure immediately, if at all possible. This will give you a solid industrial base to work with. 
+
+* Invasion: For the invasion phase of the game, I highly recommend an elastic defense, followed by trying to stabilize the front, before trying to put the invaders in a pocket. It's possible to lose that scenario, but by being flexible in your defense and picking good fights it can be won every time.
 
 ### Minimum Requirements:
 

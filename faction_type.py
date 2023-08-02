@@ -12,13 +12,12 @@ class FactionType(Enum):
     AI_EMPIRE_4 = 7
     AI_EMPIRE_5 = 8
     AI_EMPIRE_6 = 9
-    EXOGALACTIC_INVASION = 10  # NOTE: Not implemented yet
+    EXOGALACTIC_INVASION = 10  
     # more to come
 
-
 ai_empire_faction_types = [FactionType.AI_EMPIRE_1, FactionType.AI_EMPIRE_2, FactionType.AI_EMPIRE_3,
-                           FactionType.AI_EMPIRE_4, FactionType.AI_EMPIRE_5, FactionType.AI_EMPIRE_6]
-
+                           FactionType.AI_EMPIRE_4, FactionType.AI_EMPIRE_5, FactionType.AI_EMPIRE_6,
+                           FactionType.EXOGALACTIC_INVASION]
 
 def faction_type_to_color(faction):
     if faction == FactionType.PLAYER:
@@ -39,5 +38,7 @@ def faction_type_to_color(faction):
         return ai_empire_colors[4]
     elif faction == FactionType.AI_EMPIRE_6:
         return ai_empire_colors[5]
+    elif faction == FactionType.EXOGALACTIC_INVASION:
+        return ai_empire_colors[6]
     return None
 
