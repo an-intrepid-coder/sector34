@@ -3,6 +3,49 @@ from constants import *
 from faction_type import faction_type_to_color, FactionType
 from random import choice, randrange, randint
 from utility import d10000, d20, d100, coin_flip
+from pygame.math import Vector2
+
+class MissileSprite: 
+    def __init__(self, ):
+        self.surface = pygame.Surface((20, 20)) 
+        self.surface.set_colorkey(COLOR_ALPHA_KEY)
+        self.surface.fill(COLOR_ALPHA_KEY)  
+        self.frames = []
+        for _ in range(NUM_PULSE_FRAMES // 2):
+            frame = self.surface.copy()  
+            pygame.draw.circle(frame, "red", (20 // 2, 20 // 2), MISSILE_CORE_RADIUS_PX)
+            self.frames.append(frame)
+        for _ in range(NUM_PULSE_FRAMES // 2):
+            frame = self.surface.copy()  
+            pygame.draw.circle(frame, "red", (20 // 2, 20 // 2), MISSILE_CORE_RADIUS_PX)
+            pygame.draw.circle(frame, "white", (20 // 2, 20 // 2), MISSILE_CORE_RADIUS_PX + MISSILE_CORE_PADDING_PX, MISSILE_CORE_PADDING_PX)
+            self.frames.append(frame)
+
+class MissileObject:
+    def __init__(self, pos, sprite, target_sprite):
+        self.velocity = 0 
+        self.target = target_sprite
+        self.sprite = sprite 
+        self.pos = pos      
+        self.arrived = False
+        self.frames_index = 0
+
+    def draw(self, surface):
+        surface.blit(self.sprite.frames[self.frames_index], self.pos)
+        self.frames_index = (self.frames_index + 1) % NUM_PULSE_FRAMES
+        if self.target is not None:
+            if self.target.pos == self.pos:
+                self.target.hit = True  
+                pygame.draw.circle(surface, COLOR_EXPLOSION, self.pos, MISSILE_CORE_RADIUS_PX * 3) 
+
+    def update(self):
+        self.velocity += 1 
+        if self.target is not None:
+            self.pos = Vector2(self.pos).move_towards(self.target.pos, self.velocity)
+        if self.target is None:
+            self.arrived = True 
+        elif self.pos == self.target.pos:
+            self.arrived = True
 
 class BattleSprite:  
     def __init__(self, faction_type, shape):
@@ -85,15 +128,20 @@ class Destroyer:
         self.battle = battle
         self.move_ticker = randrange(0, 100)
         self.laser_ticker = randrange(0, DESTROYER_LASER_FREQUENCY)
+        self.missile_ticker = randrange(0, MISSILE_TICKER_COUNT)
         self.hit = hit
         self.upscaled = upscaled
         self.sprite = sprite
         self.sprite_pos = (self.pos[0] - self.length // 2, self.pos[1] - self.width // 2, self.length, self.width)
         self.frame_index = randrange(0, len(sprite.frames))
         self.explosion_frame_index = randrange(0, len(sprite.explosion_frames))
+        self.at_line = False
 
     def fire_laser(self, surface):
-        if self.laser_ticker == DESTROYER_LASER_FREQUENCY and not self.explosion:
+        ticker_limit = DESTROYER_LASER_FREQUENCY
+        if self.at_line:
+            ticker_limit = 30
+        if self.laser_ticker >= ticker_limit and not self.explosion:
             self.laser_ticker = 0
             for _ in range(DESTROYER_LASER_QUANTITY):
                 if self.faction_type == FactionType.PLAYER:
@@ -110,7 +158,13 @@ class Destroyer:
                 if target is not None:
                     if not target.explosion:
                         target.hit = True
-                        pygame.draw.line(surface, color, self.pos, target.pos, LASER_WIDTH)
+                        width = LASER_WIDTH
+                        if self.at_line:
+                            width = 1
+                        pygame.draw.line(surface, color, self.pos, target.pos, width)
+                        if not self.at_line:
+                            pygame.draw.circle(surface, COLOR_EXPLOSION, target.pos, LASER_WIDTH * 2)  # testing
+                            pygame.draw.circle(surface, color, self.pos, LASER_WIDTH * 2)  # testing
         self.laser_ticker += 1
 
     def draw(self, surface): 
@@ -170,10 +224,12 @@ class Destroyer:
                 limit = new_x > SCREEN_WIDTH_PX / 2 - self.length * 2
                 if limit and not (winner and end_rounds):
                     new_x = self.pos[0]
+                    self.at_line = True
             elif self.faction_type == self.battle.defender_faction:
                 limit = new_x < SCREEN_WIDTH_PX / 2 + self.length * 2
                 if limit and not (self.battle.retreat and retreat_rounds):
                     new_x = self.pos[0]
+                    self.at_line = True
             self.pos = (new_x, self.pos[1])
             self.sprite_pos = (self.pos[0] - self.length // 2, self.pos[1] - self.width // 2, self.length, self.width)
         self.move_ticker = (self.move_ticker + 1) % 100

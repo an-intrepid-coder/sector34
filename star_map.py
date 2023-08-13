@@ -5,17 +5,7 @@ from faction_type import FactionType, ai_empire_faction_types
 from fleet import Fleet
 from pygame.math import Vector2, clamp
 from utility import phonetic_index, coin_flip, primary_system_names, secondary_system_names, prefix_system_names, d100, ai_empire_faction_post_labels, ai_empire_faction_pre_labels
-
-
-# Node class for advanced map building and AI behavior down the road
-class Node:
-    def __init__(self, loc, locations):
-        self.value = loc
-        self.children = []
-        for other in locations:
-            if other != loc and loc.ly_to(other.pos) <= DEFAULT_FUEL_RANGE_LY:
-                self.children.append(other)
-
+from math import floor
 
 # TODO: variable sized star maps, for when there is a zooming/scrolling map
 #       and full-screen. 
@@ -28,7 +18,7 @@ class StarMap:
         self.player_hw = None
         self.deployed_fleets = []
         self.faction_homeworlds = []
-        self.faction_names = {}  
+        self.faction_names = {}   
         self.faction_names[FactionType.EXOGALACTIC_INVASION] = "Invaders"
         self.num_stars = 0
 
@@ -172,7 +162,7 @@ class StarMap:
                         closest = loc
         return closest
 
-    def deploy_fleet(self, source, dest, num_ships):  
+    def deploy_fleet(self, source, dest, num_ships, ai_threat_check_flag=False, pre_waypoints=None):
         if num_ships < 1: 
             return
         if source.ly_to(dest.pos) > DEFAULT_FUEL_RANGE_LY:
@@ -180,8 +170,22 @@ class StarMap:
         if source == dest:
             return
         if source.ships - 1 >= num_ships:
+            # Will prioritize veteran ships for deployment, until I implement a slider for that (TODO)
+            total_vet_ships = source.get_num_vets()
+            if num_ships <= total_vet_ships:
+                vet = 100 
+                diff = total_vet_ships - num_ships
+                source.veterancy_out_of_100 = floor(diff / (source.ships - num_ships) * 100)
+            else:  
+                vet = floor(total_vet_ships / num_ships * 100)  
+                source.veterancy_out_of_100 = 0 
             name = self.name_a_fleet(source.faction_type)
-            fleet = Fleet(name, source.pos, source.faction_type, num_ships, dest)
+            fleet = Fleet(name, source.pos, source.faction_type, num_ships, dest, vet)
+            fleet.ai_threat_check_flag = ai_threat_check_flag 
+            if pre_waypoints is None:
+                fleet.waypoints.append(dest)
+            else:
+                fleet.waypoints = pre_waypoints
             self.deployed_fleets.append(fleet)
             source.ships -= num_ships
 

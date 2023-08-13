@@ -3,7 +3,7 @@
 
 from os import path
 
-VERSION = "0.0.4"
+VERSION = "0.0.5"
 
 FONT_PATH = path.abspath(path.join(path.dirname(__file__), "./sansation/Sansation-Regular.ttf"))
 WINDOW_ICON_PATH = path.abspath(path.join(path.dirname(__file__), "./window_icon.png"))
@@ -29,7 +29,7 @@ CONSOLE_HEIGHT_PX = 120
 # "Hard Mode" increases the ship production for AI Empires
 HARD_MODE_PRODUCTION_BONUS = 15
 
-LAST_FACTION_BUFF_PRODUCTION_BONUS = 50 # TODO: Test this in practice
+LAST_FACTION_BUFF_PRODUCTION_BONUS = 50 
 
 CLOSE_BATTLE_SHIP_FACTOR = .5
 CLOSE_BATTLE_SHIP_DIFF = 10
@@ -79,18 +79,15 @@ NON_SPACEFARING_PRODUCTION_PENALTY = 3
 
 # NOTE: Fleet width is the number of d20s rolled in
 #       the contest that decides a round of combat.
-#       For every multiple of outnumber margin that
-#       a side outnumbers their opponenet by, they
-#       get an extra fleet width. A fleet of less
-#       than 3 ships only gets its number of ships
-#       as fleet width. When outnumbered after the
-#       first round of combat, the outnumbered
-#       side has a chance to retreat which is
-#       the default retreat chance multiplied by
-#       how many margins they are outnumbered by,
-#       to a maximum of 90%. Retreating ships
-#       simply flee to the nearest friendly world.
 DEFAULT_FLEET_WIDTH = 3
+FLEET_WIDTH_DIVISOR = 120
+FLEET_WIDTH_MAX = 6
+# NOTE: The formula for outnumber die is that, for a given round,
+#       let X be the side with more ships and Y be the side with less.
+#       For every multiple of Y*1.5 (e.g. Y*1.5, Y*3, Y*4.5, etc.) that
+#       X is greater than or equal to, X's side gets an outnumber bonus die
+#       for that round (this is re-calculated every round). These replace lower 
+#       rolls in the set, and do not increase fleet width.
 BASE_OUTNUMBER_MARGIN = 1.5
 DEFAULT_RETREAT_CHANCE_OUT_OF_100 = 10 
 DEFAULT_RETREAT_CHANCE_HARD_CAP = 90 
@@ -160,7 +157,7 @@ AI_EMPIRE_FACTION_NAME_SIZE_CONSTRAINT = 10
 
 # The relative size of an incoming fleet for it to be
 # considered dangerous by the AI:
-INCOMING_THREAT_THRESHOLD = .25
+INCOMING_THREAT_THRESHOLD = .25 # TODO: deprecated, I think
 
 FLEET_ETA_LINE_WIDTH = 3
 
@@ -171,25 +168,11 @@ PARTITION_GRID_SIDE = int((DEFAULT_FUEL_RANGE_LY * LY) // 2)
 #       player isn't careful.
 PIRATES_STARTING_SHIPS_MIN = 5
 PIRATES_STARTING_SHIPS_MAX = 10
-AI_EMPIRE_STARTING_SHIPS = 15
+AI_EMPIRE_STARTING_SHIPS = 20
 PLAYER_STARTING_SHIPS = 20
 NON_SPACEFARING_STARTING_SHIPS_MIN = 1
 NON_SPACEFARING_STARTING_SHIPS_MAX = 3
 NON_SPACEFARING_PRODUCTION_LIMIT_THRESHOLD = 5
-
-# Empire AI: 
-# NOTE: For now, all AI Empires behave the same
-#       way. I will individualize them down the
-#       road, extensively.
-AI_EMPIRE_OVERMATCH_THRESHOLD = 1.5
-AI_EMPIRE_EVACUATION_THRESHOLD = 3  
-AI_EMPIRE_MIN_ATTACK_RATIO = AI_EMPIRE_OVERMATCH_THRESHOLD
-AI_EMPIRE_MAX_ATTACK_RATIO = AI_EMPIRE_EVACUATION_THRESHOLD
-BASE_AI_EMPIRE_ATTACK_CHANCE_OUT_OF_100 = 80  
-AI_EMPIRE_HOSTILE_COUNT_FACTOR = .45  
-AI_EMPIRE_FRIENDLY_COUNT_FACTOR = .35  
-AI_EMPIRE_SCOUTING_CHANCE_OUT_OF_100 = 5
-AI_EMPIRE_SCOUTING_IN_FORCE_CHANCE_OUT_OF_100 = 33
 
 # The % of systems required for victory condition,
 # in addition to destroying all pirates and AI empires
@@ -271,14 +254,19 @@ MOVE_FREQUENCY = 50
 DESTROYER_VALUE = 1
 DESTROYER_WIDTH = 12
 DESTROYER_LENGTH = DESTROYER_WIDTH * 2
-DESTROYER_UPSCALE_CHANCE_OUT_OF_100 = 5 # for now
-DESTROYER_LASER_FREQUENCY = 100
+DESTROYER_UPSCALE_CHANCE_OUT_OF_100 = 8 
+DESTROYER_LASER_FREQUENCY = 230
 DESTROYER_LASER_QUANTITY = 1
-INVADER_ENGINE_FRAMES = 10 # TODO: tweak it
+INVADER_ENGINE_FRAMES = 10 
 INVADER_ENGINE_FRAMES_TOTAL = INVADER_ENGINE_FRAMES * 2
 TACTICAL_BATTLE_CRITICAL_EXPLOSION_CHANCE_OUT_OF_10000 = 111
 EXPLOSION_RADIUS = DESTROYER_LENGTH * 5
 INSIGNIA_RADIUS = 1
+NUM_PULSE_FRAMES = 6
+MISSILE_CORE_RADIUS_PX = 3
+MISSILE_CORE_PADDING_PX = 1
+MISSILE_TICKER_COUNT = 9000  
+MISSILE_VOLLEY_TICKER_COOUNT = 600
 NUM_EXPLOSION_FRAMES = 12
 NUM_EXPLOSION_MARKS = 7 
 LASER_WIDTH = 3
@@ -307,6 +295,15 @@ DESTROYER_SHAPE_2 = [
     (DESTROYER_LENGTH_EIGHTH * 2, DESTROYER_WIDTH_THIRD),
 ] 
 
+# NOTE: All ships which participate in a battle of any kind become veterans, and fleets
+#       get bonuses to each d20 roll per round in combat based on how many veterans are in
+#       their fleet at the start of the combat. Currently +1/+2 at 50%/90%.
+VETERANCY_ROLL_BONUS_THRESHOLD_1 = 50
+VETERANCY_ROLL_BONUS_THRESHOLD_2 = 90
+
+VETERANCY_ROLL_BONUS_1 = 1
+VETERANCY_ROLL_BONUS_2 = 2
+
 INTRO_STRINGS = [
     "It has been 100 years since the empire fell...",
     "Sector 34 is a fragmented place. Many of those systems which still have FTL are the bases of raiders and pirates.",
@@ -317,13 +314,18 @@ INTRO_STRINGS = [
 ]
 
 EXOGALACTIC_INVASION_COUNTDOWN = 30 
-EXOGALACTIC_INVASION_SIZE_RATIO = 1.7 
+EXOGALACTIC_WAVE_DELAY_MIN = 200
+EXOGALACTIC_WAVE_DELAY_MAX = 300
+EXOGALACTIC_INVASION_SIZE_RATIO = 1.5
 POST_INVASION_REENFORCEMENT_CHANCE = 5
+EXOGALACTIC_INVASION_WAVE_LIMIT = 6  
+
+COALITION_TRIGGER_PERCENT = 55
 
 # Debug mode stuff
-WATCH_TIMER_RATE = 60
-PLAYER_DEBUG_MODE_SHIPS = 830
-AI_EMPIRE_DEBUG_MODE_SHIPS = 800
-PIRATE_DEBUG_MODE_SHIPS = 800
-NON_SPACEFARING_DEBUG_MODE_SHIPS = 800
+WATCH_TIMER_RATE = 20
+PLAYER_DEBUG_MODE_SHIPS = 600  
+AI_EMPIRE_DEBUG_MODE_SHIPS = 100
+PIRATE_DEBUG_MODE_SHIPS = 1
+NON_SPACEFARING_DEBUG_MODE_SHIPS = 1
 

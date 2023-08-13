@@ -5,7 +5,7 @@ from random import randint, randrange, choice
 from utility import d100, d20, coin_flip
 from pygame.math import Vector2
 from faction_type import FactionType, ai_empire_faction_types
-from math import ceil
+from math import ceil, floor
 import pygame
 from pygame.math import Vector2
 
@@ -66,7 +66,7 @@ def random_star_color():
         return star_white()
     return choice(colors)()
 
-def generate_starfield(): # TODO: invaded variant
+def generate_starfield(): 
     starfield_surface = pygame.Surface((SCREEN_WIDTH_PX, SCREEN_HEIGHT_PX))
     # Background stars
     num_stars = int((SCREEN_WIDTH_PX * SCREEN_HEIGHT_PX) * STARFIELD_DENSITY)
@@ -133,6 +133,27 @@ class Location(Clickable):
         self.rally_amount = 0
         self.battles = 0
         self.grid_pos = grid_pos
+        self.veterancy_out_of_100 = 0
+
+    def get_num_vets(self):  
+        return floor((self.veterancy_out_of_100 / 100) * self.ships) 
+
+    def get_percent_vets(self):
+        return floor((self.get_num_vets() / self.ships) * 100)
+
+    def mix_fleet(self, fleet): 
+        vets = self.get_num_vets() + fleet.get_num_vets()
+        total = self.ships + fleet.ships
+        self.veterancy_out_of_100 = floor(vets / total * 100)
+        self.ships = total
+
+    def get_veterancy_roll_bonus(self):
+        if self.veterancy_out_of_100 >= VETERANCY_ROLL_BONUS_THRESHOLD_2:
+            return VETERANCY_ROLL_BONUS_2
+        elif self.veterancy_out_of_100 >= VETERANCY_ROLL_BONUS_THRESHOLD_1:
+            return VETERANCY_ROLL_BONUS_1
+        else: 
+            return 0
 
     def decimate(self):
         self.reenforce_chance_out_of_100 = POST_INVASION_REENFORCEMENT_CHANCE
