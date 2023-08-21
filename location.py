@@ -134,6 +134,7 @@ class Location(Clickable):
         self.battles = 0
         self.grid_pos = grid_pos
         self.veterancy_out_of_100 = 0
+        self.decimated = False
 
     def get_num_vets(self):  
         return floor((self.veterancy_out_of_100 / 100) * self.ships) 
@@ -156,6 +157,7 @@ class Location(Clickable):
             return 0
 
     def decimate(self):
+        self.decimated = True
         self.reenforce_chance_out_of_100 = POST_INVASION_REENFORCEMENT_CHANCE
         colors = [COLOR_FOG, COLOR_FOGGED_STAR, COLOR_DECIMATION_RED, COLOR_DECIMATION_PURPLE, COLOR_DECIMATION_ORANGE]
         planet_px_rect = (self.planet_pos[0] - self.planet_radius, self.planet_pos[1] - self.planet_radius, self.planet_radius * 2, self.planet_radius * 2)
@@ -188,7 +190,7 @@ class Location(Clickable):
         elif self.faction_type in ai_empire_faction_types and hard_mode:
             return d100()[0] <= self.reenforce_chance_out_of_100 + HARD_MODE_PRODUCTION_BONUS
         elif self.faction_type in ai_empire_faction_types and self.faction_type != FactionType.PLAYER and last_faction_buff:
-            return d100()[0] <= self.reenforce_chance_out_of_100 + LAST_FACTION_BUFF_PRODUCTION_BONUS
+            return d100()[0] <= LAST_FACTION_BUFF_PRODUCTION_BONUS
         else:
             return d100()[0] <= self.reenforce_chance_out_of_100
 

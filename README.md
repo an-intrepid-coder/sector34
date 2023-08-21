@@ -1,12 +1,16 @@
 # SECTOR 34
 
-![Strategic Mode Screenshot](screenshots/sector34_003_strat.png)
+![Strategic Mode Screenshot](screenshots/s30.jpg)
 
-![Tactical Mode Screenshot](screenshots/sector34_003_tac.png)
+![Tactical Mode Screenshot](screenshots/s47.jpg)
 
-![Political Map Mode Screenshot](screenshots/sector34_003_pol.png)
+![Political Map Mode Screenshot](screenshots/s26.jpg)
 
-![Victory Screenshot](screenshots/sector34_003_vic.png)
+![Victory Screenshot](screenshots/s170.jpg)
+
+![Fleet Graph Screenshot](screenshots/s28.jpg)
+
+![Status Graph Screenshot](screenshots/s171.jpg)
 
 **Description**: Sector 34 is a Space 4x-like/Risk-like/Wargame, inspired by games like Master of Orion, Risk, and Sword of the Stars. The goal is to unite the sector under the player's control, vying against pirates and the fellow remnants of a collapsed empire that has left the sector to its fate. To do so, they will need to be cunning and judicious in the use of their fleets. They will need to use clever timing, and out-smart the AI opponents. Other influences include Stellaris, GalCiv, Gratuitous Space Battles, AI War: Fleet Command, and dozens of other good games within and without the 4x genre and the strategy genres in general.
 

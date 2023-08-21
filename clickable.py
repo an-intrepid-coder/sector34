@@ -1,6 +1,7 @@
 class Clickable:
-    def __init__(self, rect):
+    def __init__(self, rect, attachment = None):
         self.rect = rect
+        self.attachment = attachment
 
     def clicked(self, pos):
         within_x = pos[0] >= self.rect[0] and pos[0] < self.rect[0] + self.rect[2]

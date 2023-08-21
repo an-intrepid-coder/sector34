@@ -128,9 +128,9 @@ class Haymaker(Personality):
         self.name = "Haymaker"
         base_attack_chance = 90
         base_hostile_count_factor = .45
-        base_friendly_count_factor = .30
+        base_friendly_count_factor = .28
         base_defensibility_threshold = 3
-        min_attack_ratio = 1.4
+        min_attack_ratio = 1.3
         max_attack_ratio = 3
         base_reserve_threshold = 10
         base_reserve_pool_threshold = 3

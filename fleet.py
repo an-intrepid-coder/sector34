@@ -79,6 +79,5 @@ class Fleet(Clickable):
         return self.clicked(pos)
 
     def arrived(self):
-        # testing: this likely needs a margin of error? This should be fool-proof...
         return self.get_eta() < 1
 

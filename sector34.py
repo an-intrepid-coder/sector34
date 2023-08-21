@@ -10,11 +10,12 @@ from faction import Faction
 from faction_type import FactionType, faction_type_to_color, ai_empire_faction_types
 from fleet import Fleet
 from console import ConsoleLog
-from utility import d20, d100, phonetic_index, prefix_system_names, secondary_system_names, click_and_drag_rect
+from utility import d20, d100, phonetic_index, prefix_system_names, secondary_system_names, click_and_drag_rect, xthify
 from pygame.math import Vector2
 from random import shuffle, randint, choice
 from math import ceil, floor
 from personality import *
+from battle_graph import BattleGraph
 
 class Game:
     def __init__(self):
@@ -45,6 +46,12 @@ class Game:
         self.invasion_fleets_spawned = False
         self.invasion_waves_completed = 0
         self.turn_of_last_wave = 0
+        self.console_scrolled_up_by = 0
+        self.console_clickables = []
+        self.displaying_battle_graph = None
+        self.displaying_stats_graph = False
+        self.displaying_fleets_graph = False
+        self.coalition_trigger = COALITION_TRIGGER_PERCENT + randint(0, 5)
 
         self.battle_sprites = {}
         factions = [i for i in FactionType]
@@ -135,6 +142,16 @@ class Game:
         self.battles_lost = 0
         self.ships_lost = 0
         self.ships_destroyed = 0
+        self.ships_over_time = []
+        self.veteran_ships_over_time = []
+        self.enemy_ships_over_time = []
+        self.systems_over_time = []
+        self.deployed_fleets_over_time = []
+        self.decimated_systems_over_time = []
+        self.ffa_stage_turn = 0
+        self.coalition_stage_turn = False
+        self.invader_stage_turn = False
+        self.biggest_battle = 0
         # NOTE: more stats to come
 
     def game_loop(self):
@@ -194,7 +211,10 @@ class Game:
                         for system in self.star_map.locations:
                             if system.pos[0] <= INVASION_MARGIN_PX:
                                 invasion_targets.append(system)
-                    num_invaders = max(int(ship_count * EXOGALACTIC_INVASION_SIZE_RATIO) - existing_invader_ship_count, 1)
+                    invader_ratio = EXOGALACTIC_INVASION_SIZE_RATIO
+                    if self.hard_mode:
+                        invader_ratio += .5
+                    num_invaders = max(int(ship_count * invader_ratio) - existing_invader_ship_count, 1)
                     invader_fleets_size = max(num_invaders // len(invasion_targets), 1)
                     for target in invasion_targets:
                         name = self.star_map.name_a_fleet(FactionType.EXOGALACTIC_INVASION)
@@ -242,7 +262,6 @@ class Game:
                     self.can_deploy_to = [i for i in filter(lambda x: x.ly_to(self.selected_system.pos) <= DEFAULT_FUEL_RANGE_LY, self.star_map.locations)]
 
         def victory_splash():
-            # placeholder
             splash_rect = (MAP_WIDTH_PX // 4, MAP_HEIGHT_PX // 4, MAP_WIDTH_PX // 2, MAP_HEIGHT_PX // 2)
             pygame.draw.rect(self.screen, "black", splash_rect)
             pygame.draw.rect(self.screen, "green", splash_rect, 1)
@@ -260,6 +279,8 @@ class Game:
             self.screen.blit(ships_destroyed_text, (MAP_WIDTH_PX // 2 - ships_destroyed_text.get_width() // 2, y + height * 3))
             ships_lost_text = font.render("Lost {} ships.".format(self.ships_lost), True, "red")
             self.screen.blit(ships_lost_text, (MAP_WIDTH_PX // 2 - ships_lost_text.get_width() // 2, y + height * 4))
+            bb_text = font.render("Biggest Battle: {} ships".format(self.biggest_battle), True, "red")
+            self.screen.blit(bb_text, (MAP_WIDTH_PX // 2 - bb_text.get_width() // 2, y + height * 5))
 
         # Checks the victory conditions:
         def victory_check():
@@ -284,8 +305,9 @@ class Game:
                 if len(empire_fleets) == 0:
                     self.console.push("All rival successors to the empire have been vanquished...")
                     self.all_ai_empires_destroyed = True
-            if conquest_percent >= COALITION_TRIGGER_PERCENT and not self.coalition_triggered:
+            if conquest_percent >= self.coalition_trigger and not self.coalition_triggered:
                 self.coalition_triggered = True
+                self.coalition_stage_turn = self.turn
                 name = choice(["The Resistance", "The Coalition"])
                 self.ai_factions[0].name = name
                 self.ai_factions[0].personality = Water()
@@ -302,11 +324,15 @@ class Game:
             if num_pirate_systems == 0 == num_ai_empire_systems and conquest_percent >= CONQUEST_PERCENT_FOR_VICTORY and not self.exogalactic_invasion_begun:
                 empire_fleets = [i for i in filter(lambda x: x.faction_type in ai_empire_faction_types and x.faction_type != FactionType.PLAYER, self.star_map.deployed_fleets)]
                 if len(empire_fleets) == 0:
+                    for system in self.star_map.locations:
+                        system.reenforce_chance_out_of_100 = LAST_FACTION_BUFF_PRODUCTION_BONUS
                     self.console.push("You have conquered Sector 34!")
                     self.invasion_direction = choice(["top", "right", "bottom", "left"])
                     self.console.push("Rumors of strange invaders from beyond the {} side of the map...".format(self.invasion_direction))
                     self.console.push("Prepare yourself... you have {} turns until the invasion!".format(EXOGALACTIC_INVASION_COUNTDOWN))
+                    self.console.push("All systems in the sector start churning out ships to meet this new threat!".format(EXOGALACTIC_INVASION_COUNTDOWN))
                     self.exogalactic_invasion_begun = True
+                    self.invader_stage_turn = self.turn
             if self.invasion_fleets_spawned:
                 invader_systems = [i for i in filter(lambda x: x.faction_type == FactionType.EXOGALACTIC_INVASION, self.star_map.locations)]
                 invader_fleets = [i for i in filter(lambda x: x.faction_type == FactionType.EXOGALACTIC_INVASION, self.star_map.deployed_fleets)]
@@ -372,8 +398,8 @@ class Game:
                 fleet.move()
 
         # Each system has a random chance to spawn reenforcements.
-        # Player reenforcements go to a common pool, while
-        # AI reenforcements remain local (for now).
+        # Player reenforcements can go to a common pool, while all
+        # AI reenforcements remain local.
         def spawn_reenforcements():
             for loc in self.star_map.locations:
                 if loc.will_spawn_reenforcements(self.hard_mode, self.last_faction_buff):
@@ -469,19 +495,21 @@ class Game:
             def is_retreat(rounds, attackers, defenders, charge): 
                 return might_retreat(rounds, attackers, defenders, charge) and will_retreat(attackers, defenders) and can_retreat()
 
-            def push_battle_results_to_console(loc, fleet_name, attackers_won, defenders_won, attacker_faction, defender_faction, retreat, attackers_losses, defenders_losses, rounds):
+            def push_battle_results_to_console(loc, fleet_name, attackers_won, defenders_won, attacker_faction, defender_faction, retreat, attackers_losses, defenders_losses, rounds, graph):
                 attacker_name = self.star_map.faction_names[attacker_faction]
                 if not (attacker_faction == FactionType.PLAYER or defender_faction == FactionType.PLAYER):
                     return 
                 defensive_total_victory = defenders_won and not retreat
                 if attackers_won:
-                    self.console.push("{} of {} conquered {} (losses: {} atk / {} def, {} rounds)".format(fleet_name, attacker_name, loc.name, attackers_losses, defenders_losses, rounds))
+                    self.console.push("{} of {} conquered {} (losses: {} atk / {} def, {} rounds)".format(fleet_name, attacker_name, loc.name, attackers_losses, defenders_losses, rounds), graph)
                 elif defensive_total_victory:
-                    self.console.push("defenders of {} destroyed {} from {} (losses: {} atk / {} def; {} rounds)".format(loc.name, fleet_name, attacker_name, attackers_losses, defenders_losses, rounds))
+                    self.console.push("defenders of {} destroyed {} from {} (losses: {} atk / {} def; {} rounds)".format(loc.name, fleet_name, attacker_name, attackers_losses, defenders_losses, rounds), graph)
                 else:
-                    self.console.push("defenders of {} forced {} from {} to retreat (losses: {} atk / {} def; {} rounds)".format(loc.name, fleet_name, attacker_name, attackers_losses, defenders_losses, rounds))
+                    self.console.push("defenders of {} forced {} from {} to retreat (losses: {} atk / {} def; {} rounds)".format(loc.name, fleet_name, attacker_name, attackers_losses, defenders_losses, rounds), graph)
 
-            def effects_of_battle_on_game_state(attackers, defenders, tactical_battle, loc, fleet, retreating, attackers_losses, defenders_losses, rounds):  
+            def effects_of_battle_on_game_state(attackers, defenders, tactical_battle, loc, fleet, retreating, attackers_losses, defenders_losses, rounds, graph):  
+                if loc.ships + fleet.ships > self.biggest_battle:
+                    self.biggest_battle = loc.ships + fleet.ships
                 attacker_faction = fleet.faction_type
                 defender_faction = loc.faction_type
                 attacker_name = fleet.name
@@ -500,7 +528,7 @@ class Game:
                     if attacker_faction == FactionType.PIRATES:
                         self.all_pirates_destroyed = False
                     if attacker_faction == FactionType.EXOGALACTIC_INVASION:
-                        loc.decimate() # TODO: test this worked
+                        loc.decimate() 
                 elif attackers <= 0:
                     # defenders won without a retreat
                     tactical_battle.winner = defender_faction
@@ -527,7 +555,7 @@ class Game:
                         fleet.waypoints = [fleet.destination]
 
                 # Handle output if player involved
-                push_battle_results_to_console(loc, attacker_name, attackers_won, defenders_won, attacker_faction, defender_faction, retreating, attackers_losses, defenders_losses, rounds)
+                push_battle_results_to_console(loc, attacker_name, attackers_won, defenders_won, attacker_faction, defender_faction, retreating, attackers_losses, defenders_losses, rounds, graph)
 
                 # Handle player-specific effects                
                 if attacker_faction == FactionType.PLAYER or defender_faction == FactionType.PLAYER:
@@ -564,6 +592,7 @@ class Game:
                     fleet.to_be_removed = True
 
             def handle_combat(fleet, loc):
+                graph = BattleGraph(fleet.ships, loc.ships)
                 # A combat begins
                 attackers = fleet.ships
                 attacker_faction = fleet.faction_type
@@ -584,7 +613,19 @@ class Game:
                 if charge:
                     tactical_battle.charge = True
                 if charge and d100()[0] <= LAST_STAND_CHANCE_OUT_OF_100:
+                    last_stand = True
                     tactical_battle.last_stand = True
+                graph.charge = charge
+                graph.last_stand = last_stand
+                graph.xp_bonuses = {"attacker": fleet.get_veterancy_roll_bonus(), "defender": loc.get_veterancy_roll_bonus()}
+                graph_colors = {"attacker": "red", "defender": "red"}
+                if fleet.faction_type == FactionType.PLAYER:
+                    graph_colors["attacker"] = "green"
+                else:
+                    graph_colors["defender"] = "green"
+                graph.colors = graph_colors
+                graph.battle_name = "{} battle of {}".format(xthify(loc.battles + 1), loc.name)
+                graph.battle_turn = self.turn
                 while fighting: 
                     brilliancies = {"attacker": False, "defender": False}
                     attacker_round_losses = 0
@@ -604,6 +645,7 @@ class Game:
                         defender_bonus += BRILLIANCY_BONUS
                         brilliancies["defender"] = True
                     tactical_battle.brilliancies.append(brilliancies)
+                    graph.brilliancies_by_side_per_round.append(brilliancies)
                     # Veterancy bonuses:
                     tactical_battle.attacker_vet_bonus = fleet.get_veterancy_roll_bonus()
                     attacker_bonus += tactical_battle.attacker_vet_bonus
@@ -616,11 +658,13 @@ class Game:
                     outnumber_die = {"attacker": 0, "defender": 0}
                     attackers_width, defenders_width = fleet_widths(attackers, defenders)
                     measure_width = min(attackers_width, defenders_width)
+                    graph.fleet_width_per_round.append(measure_width)
                     if attackers_width > measure_width:
                         outnumber_die["attacker"] = attackers_width - measure_width
                     elif defenders_width > measure_width:
                         outnumber_die["defender"] = defenders_width - measure_width
                     tactical_battle.outnumber_die.append(outnumber_die)
+                    graph.outnumber_dice_by_side_per_round.append(outnumber_die)
 
                     # roll for attackers and defenders
                     attackers_roll = d20(num_dice=attackers_width, bonus=attacker_bonus)
@@ -647,11 +691,13 @@ class Game:
                         tactical_battle.retreat = True
 
                     tactical_battle.rounds.append({"attacker_losses": attacker_round_losses, "defender_losses": defender_round_losses})
-
+                    graph.ships_by_side_per_round.append({"attacker": attackers, "defender": defenders})
+                        
                     rounds += 1
+    
 
                 # Handle the effects of the battle
-                effects_of_battle_on_game_state(attackers, defenders, tactical_battle, loc, fleet, retreating, attackers_losses, defenders_losses, rounds)
+                effects_of_battle_on_game_state(attackers, defenders, tactical_battle, loc, fleet, retreating, attackers_losses, defenders_losses, rounds, graph)
 
             for fleet in self.star_map.deployed_fleets: 
                 loc = fleet.destination
@@ -680,10 +726,10 @@ class Game:
                 self.display_changed = True
 
         # Check if any locations have been clicked on:
-        def check_location_clicks(pos): # TODO: delete waypoints in routing_mode
+        def check_location_clicks(pos): 
             ctrl = pygame.key.get_pressed()[K_LCTRL] or pygame.key.get_pressed()[K_RCTRL]
             shift = pygame.key.get_pressed()[K_LSHIFT] or pygame.key.get_pressed()[K_RSHIFT]
-            for loc in self.star_map.locations: # <-- niiiice
+            for loc in self.star_map.locations: 
                 if loc.clicked(pos):
                     # drag-selected deploy
                     if self.deploy_mode and len(self.multiple_locs_selected) > 1:
@@ -746,8 +792,8 @@ class Game:
                 self.console.push("REENFORCE MODE: Select target")
                 self.reenforce_mode = True
                 self.display_changed = True
-            elif self.reenforce_up_button.clicked(pos): # This isn't quite right. Can do better. TODO
-                if not (shift or ctrl) and self.reenforce_amount < self.player_reenforcement_pool:
+            elif self.reenforce_up_button.clicked(pos): 
+                if not (shift or ctrl) and self.reenforce_amount <= self.player_reenforcement_pool: 
                     self.reenforce_amount += 1
                     self.display_changed = True
                 elif shift and self.reenforce_amount + 10 <= self.player_reenforcement_pool:
@@ -767,6 +813,11 @@ class Game:
                     self.reenforce_amount = 0
                     self.display_changed = True
 
+        def check_console_clickables(pos):
+            for clickable in self.console_clickables:
+                if clickable.clicked(pos): 
+                    self.displaying_battle_graph = clickable.attachment 
+
         def check_deploy_button_clicks(pos, shift, ctrl):
             if self.deploy_button.clicked(pos):
                 activate_deploy_mode() 
@@ -775,7 +826,7 @@ class Game:
                 if not (shift or ctrl) and self.deploy_amount < self.selected_system.ships - 1:
                     self.deploy_amount += 1
                     self.display_changed = True
-                elif shift and self.deploy_amount + 10 < self.selected_system.ships - 1:
+                elif shift and self.deploy_amount + 10 <= self.selected_system.ships - 1:
                     self.deploy_amount += 10
                     self.display_changed = True
                 elif ctrl and self.selected_system.ships > 0:
@@ -948,9 +999,9 @@ class Game:
 
                     # display deployed fleets:
                     for fleet in self.star_map.deployed_fleets:
-                        draw_fleet(fleet) # TODO: Draw selected ones last
+                        draw_fleet(fleet) 
                     if self.selected_fleet is not None:
-                        draw_fleet(self.selected_fleet) # TODO: test after toggle implemented
+                        draw_fleet(self.selected_fleet) 
 
                     # display fuel range and sensor range for selected system
                     if self.selected_system is not None:
@@ -1227,57 +1278,184 @@ class Game:
                 pygame.draw.rect(hud_surface, "red", (0, 0, HUD_WIDTH_PX, HUD_HEIGHT_PX), 1)
                 self.screen.blit(hud_surface, (MAP_WIDTH_PX, 0))
 
-            def draw_console(): # TODO: Scrolling console
+            def draw_console(): 
                 console_surface = pygame.Surface((CONSOLE_WIDTH_PX, CONSOLE_HEIGHT_PX))
                 pygame.draw.rect(console_surface, "green", (0, 0, CONSOLE_WIDTH_PX, CONSOLE_HEIGHT_PX), 1)
                 font = pygame.font.Font(FONT_PATH, CONSOLE_FONT_SIZE)
                 line_height = CONSOLE_FONT_SIZE + CONSOLE_FONT_PADDING_PX
                 lines = CONSOLE_HEIGHT_PX // line_height
-                last = len(self.console.messages) - 1
+                last = len(self.console.messages) - 1 
                 msgs = []
+                self.console_clickables = []
                 for line in range(lines):
-                    index = last - line
-                    if index >= 0:
+                    index = last - line - self.console_scrolled_up_by
+                    if index >= 0 and index < len(self.console.messages):
                         msgs.append(self.console.messages[index])
 
-                msgs.reverse()
+                msgs.reverse() 
                 for line in range(len(msgs)):
-                    line_surface = font.render(msgs[line], True, "green")
+                    line_surface = font.render(msgs[line]["msg"], True, "green")
                     console_surface.blit(line_surface, (0, line * line_height))
+                    attachment = msgs[line]["attachment"]
+                    if attachment is not None:
+                        rect = (0, MAP_HEIGHT_PX + line * line_height, CONSOLE_WIDTH_PX, line_height)
+                        self.console_clickables.append(Clickable(rect, attachment)) 
 
                 self.screen.blit(console_surface, (0, MAP_HEIGHT_PX))
+
+            def draw_battle_graph():
+                graph = self.displaying_battle_graph
+                y_atk = graph.starting_ships["attacker"]
+                y_def = graph.starting_ships["defender"]
+                max_x = len(graph.ships_by_side_per_round)
+                max_y = max(y_atk, y_def)
+                graph_surface = pygame.Surface((max_x, max_y))
+                atk_color = graph.colors["attacker"]
+                def_color = graph.colors["defender"]
+                for x in range(1, max_x):
+                    pygame.draw.line(graph_surface, atk_color, (x - 1, y_atk), (x, graph.ships_by_side_per_round[x]["attacker"]), 1)
+                    y_atk = graph.ships_by_side_per_round[x]["attacker"]
+                    pygame.draw.line(graph_surface, def_color, (x - 1, y_def), (x, graph.ships_by_side_per_round[x]["defender"]), 1)
+                    y_def = graph.ships_by_side_per_round[x]["defender"]
+
+                graph_surface = pygame.transform.scale(graph_surface, (SCREEN_WIDTH_PX, GRAPH_HEIGHT_PX))
+                graph_surface = pygame.transform.flip(graph_surface, False, True)
+                self.screen.fill((30, 30, 30))
+                self.screen.blit(graph_surface, (0, 0))
+                font = pygame.font.Font(FONT_PATH, CONSOLE_FONT_SIZE) 
+                battle_text = font.render("{} (turn {}) (player in green)".format(graph.battle_name, graph.battle_turn), True, "white")
+                self.screen.blit(battle_text, (0, GRAPH_HEIGHT_PX))
+                atk_text = font.render("attacker started with {} ships and ended with {}".format(graph.starting_ships["attacker"], y_atk), True, atk_color)
+                self.screen.blit(atk_text, (0, GRAPH_HEIGHT_PX + CONSOLE_FONT_SIZE + 1))
+                def_text = font.render("defender started with {} ships and ended with {}".format(graph.starting_ships["defender"], y_def), True, def_color)
+                self.screen.blit(def_text, (0, GRAPH_HEIGHT_PX + (CONSOLE_FONT_SIZE + 1) * 2))
+                xp_text = font.render("attacker had +{} XP bonuses while defender had +{}".format(graph.xp_bonuses["attacker"], graph.xp_bonuses["defender"]), True, "white")
+                self.screen.blit(xp_text, (0, GRAPH_HEIGHT_PX + (CONSOLE_FONT_SIZE + 1) * 3))
+                charge_text = font.render("attacker 'charge!': {}".format(graph.charge), True, "white")
+                self.screen.blit(charge_text, (0, GRAPH_HEIGHT_PX + (CONSOLE_FONT_SIZE + 1) * 4))
+                ls_text = font.render("defender 'last stand!': {}".format(graph.last_stand), True, "white")
+                self.screen.blit(ls_text, (0, GRAPH_HEIGHT_PX + (CONSOLE_FONT_SIZE + 1) * 5))
+
+            def draw_stats_graph():
+                max_x = len(self.systems_over_time)
+                max_y = max(max(self.systems_over_time), max(self.deployed_fleets_over_time), max(self.decimated_systems_over_time))
+                graph_surface = pygame.Surface((max_x, max_y))
+                y_systems = self.systems_over_time[0]
+                y_fleets = self.deployed_fleets_over_time[0]
+                y_decimated = self.decimated_systems_over_time[0]
+                for x in range(1, max_x):
+                    if x == self.coalition_stage_turn or x == self.invader_stage_turn:
+                        pygame.draw.line(graph_surface, "white", (x, 0), (x, max_y), 1)
+                    pygame.draw.line(graph_surface, "cyan", (x - 1, y_systems), (x, self.systems_over_time[x]), 1)
+                    y_systems = self.systems_over_time[x]
+                    pygame.draw.line(graph_surface, "magenta", (x - 1, y_fleets), (x, self.deployed_fleets_over_time[x]), 1)
+                    y_fleets = self.deployed_fleets_over_time[x]
+                    pygame.draw.line(graph_surface, "red", (x - 1, y_decimated), (x, self.decimated_systems_over_time[x]), 1)
+                    y_decimated = self.decimated_systems_over_time[x]
+                graph_surface = pygame.transform.scale(graph_surface, (SCREEN_WIDTH_PX, GRAPH_HEIGHT_PX))
+                graph_surface = pygame.transform.flip(graph_surface, False, True)
+                self.screen.fill((30, 30, 30))
+                self.screen.blit(graph_surface, (0, 0))
+                font = pygame.font.Font(FONT_PATH, CONSOLE_FONT_SIZE) 
+                turn_text = font.render("turn {}".format(self.turn), True, "white")
+                self.screen.blit(turn_text, (0, GRAPH_HEIGHT_PX))
+                systems_text = font.render("player has {} systems".format(y_systems), True, "cyan")
+                self.screen.blit(systems_text, (0, GRAPH_HEIGHT_PX + CONSOLE_FONT_SIZE + 1))
+                fleets_text = font.render("player has {} deployed fleets".format(y_fleets), True, "magenta")
+                self.screen.blit(fleets_text, (0, GRAPH_HEIGHT_PX + (CONSOLE_FONT_SIZE + 1) * 2))
+                decimated_text = font.render("{} systems decimated".format(y_decimated), True, "red")
+                self.screen.blit(decimated_text, (0, GRAPH_HEIGHT_PX + (CONSOLE_FONT_SIZE + 1) * 3))
+
+            def draw_fleets_graph():
+                max_x = len(self.ships_over_time)
+                max_y = max(max(self.enemy_ships_over_time), max(self.veteran_ships_over_time), max(self.ships_over_time))
+                graph_surface = pygame.Surface((max_x, max_y))
+                y_ships = self.ships_over_time[0]
+                y_vets = self.veteran_ships_over_time[0]
+                y_enemies = self.enemy_ships_over_time[0]
+                for x in range(1, max_x):
+                    if x == self.coalition_stage_turn or x == self.invader_stage_turn:
+                        pygame.draw.line(graph_surface, "white", (x, 0), (x, max_y), 1)
+                    pygame.draw.line(graph_surface, "green", (x - 1, y_ships), (x, self.ships_over_time[x]), 1)
+                    y_ships = self.ships_over_time[x]
+                    pygame.draw.line(graph_surface, "yellow", (x - 1, y_vets), (x, self.veteran_ships_over_time[x]), 1)
+                    y_vets = self.veteran_ships_over_time[x]
+                    pygame.draw.line(graph_surface, "red", (x - 1, y_enemies), (x, self.enemy_ships_over_time[x]), 1)
+                    y_enemies = self.enemy_ships_over_time[x]
+                graph_surface = pygame.transform.scale(graph_surface, (SCREEN_WIDTH_PX, GRAPH_HEIGHT_PX))
+                graph_surface = pygame.transform.flip(graph_surface, False, True)
+                self.screen.fill((30, 30, 30))
+                self.screen.blit(graph_surface, (0, 0))
+                font = pygame.font.Font(FONT_PATH, CONSOLE_FONT_SIZE) 
+                turn_text = font.render("turn {}".format(self.turn), True, "white")
+                self.screen.blit(turn_text, (0, GRAPH_HEIGHT_PX))
+                ships_text = font.render("player has {} ships ".format(y_ships), True, "green")
+                self.screen.blit(ships_text, (0, GRAPH_HEIGHT_PX + CONSOLE_FONT_SIZE + 1))
+                vets_text = font.render("player has {} veteran ships ".format(y_vets), True, "yellow")
+                self.screen.blit(vets_text, (0, GRAPH_HEIGHT_PX + (CONSOLE_FONT_SIZE + 1) * 2))
+                enemies_text = font.render("opponents have {} ships ".format(y_enemies), True, "red")
+                self.screen.blit(enemies_text, (0, GRAPH_HEIGHT_PX + (CONSOLE_FONT_SIZE + 1) * 3))
 
             # clear display
             self.screen.fill("white")
 
-            # draw game to screen surface:
-            draw_map()
-            draw_hud()
-            draw_console()
+            if no_graphs_being_presented():
+                # draw game to screen surface:
+                draw_map()
+                draw_hud()
+                draw_console()
 
-            # End-game splashes
-            if self.game_over_mode:
-                game_over_splash()
-            elif self.victory_mode:
-                victory_splash()
+                # End-game splashes
+                if self.game_over_mode:
+                    game_over_splash()
+                elif self.victory_mode:
+                    victory_splash()
 
-            # Draw deploy mode ETA hover lines
-            if self.deploy_mode and self.eta_line_mode: 
-                if len(self.multiple_locs_selected) > 0:
-                    for loc in self.multiple_locs_selected:
-                        if loc.ly_to(self.eta_line_target.pos) <= DEFAULT_FUEL_RANGE_LY:
-                            draw_eta_line(loc, self.eta_line_target) 
-                else:
-                    draw_eta_line(self.selected_system, self.eta_line_target) 
+                # Draw deploy mode ETA hover lines
+                if self.deploy_mode and self.eta_line_mode: 
+                    if len(self.multiple_locs_selected) > 0:
+                        for loc in self.multiple_locs_selected:
+                            if loc.ly_to(self.eta_line_target.pos) <= DEFAULT_FUEL_RANGE_LY:
+                                draw_eta_line(loc, self.eta_line_target) 
+                    else:
+                        draw_eta_line(self.selected_system, self.eta_line_target) 
 
-            if self.incoming_fleets_overlay_mode:
-                draw_incoming_fleets_overlay()  
+                if self.incoming_fleets_overlay_mode:
+                    draw_incoming_fleets_overlay()  
 
-            if self.outgoing_fleets_overlay_mode:
-                draw_outgoing_fleets_overlay()  
+                if self.outgoing_fleets_overlay_mode:
+                    draw_outgoing_fleets_overlay()  
+
+            elif self.displaying_battle_graph:
+                draw_battle_graph()
+            elif self.displaying_fleets_graph:
+                draw_fleets_graph()
+            elif self.displaying_stats_graph:
+                draw_stats_graph()
 
             self.display_changed = False
             pygame.display.flip()
+
+        def stats_check():
+            player_systems = [i for i in filter(lambda x: x.faction_type == FactionType.PLAYER, self.star_map.locations)]
+            player_fleets = [i for i in filter(lambda x: x.faction_type == FactionType.PLAYER, self.star_map.deployed_fleets)]
+            player_ships = sum(map(lambda x: x.ships, player_systems))
+            player_ships += sum(map(lambda x: x.ships, player_fleets))
+            vet_ships = sum(map(lambda y: y.get_num_vets(), filter(lambda x: x.faction_type == FactionType.PLAYER, self.star_map.locations)))
+            vet_ships += sum(map(lambda y: y.get_num_vets(), filter(lambda x: x.faction_type == FactionType.PLAYER, self.star_map.deployed_fleets)))
+            enemy_systems = [i for i in filter(lambda x: x.faction_type != FactionType.PLAYER, self.star_map.locations)]
+            enemy_fleets = [i for i in filter(lambda x: x.faction_type != FactionType.PLAYER, self.star_map.deployed_fleets)]
+            player_ships = sum(map(lambda x: x.ships, player_systems))
+            player_ships += sum(map(lambda x: x.ships, player_fleets))
+            enemy_ships = sum(map(lambda x: x.ships, enemy_systems))
+            enemy_ships += sum(map(lambda x: x.ships, enemy_fleets))
+            self.ships_over_time.append(player_ships)
+            self.systems_over_time.append(len(player_systems))
+            self.veteran_ships_over_time.append(vet_ships)
+            self.enemy_ships_over_time.append(enemy_ships)
+            self.deployed_fleets_over_time.append(len(player_fleets))
+            decimated_systems = [i for i in filter(lambda x: x.decimated, self.star_map.locations)]
+            self.decimated_systems_over_time.append(len(decimated_systems))
 
         def eta_line_check(pos): 
             found = False           
@@ -1359,16 +1537,22 @@ class Game:
                     self.watch_timer = 0
                     self.turn_processing_mode = True
 
+        def no_graphs_being_presented():
+            no_battle_graph = self.displaying_battle_graph is None
+            no_stats_graph = self.displaying_stats_graph == False
+            no_fleets_graph = self.displaying_fleets_graph == False
+            return no_battle_graph and no_stats_graph and no_fleets_graph
+
         def strategic_mode():
             # handle events
             for event in pygame.event.get():
                 if event.type == QUIT:
                     # quit game:
                     self.running = False
-                if event.type == MOUSEBUTTONDOWN and not self.turn_processing_mode:
+                if event.type == MOUSEBUTTONDOWN and not self.turn_processing_mode and no_graphs_being_presented():
                     if not self.drag_start:
                         self.drag_start = pygame.mouse.get_pos()
-                elif event.type == MOUSEBUTTONUP and not self.turn_processing_mode:
+                elif event.type == MOUSEBUTTONUP and not self.turn_processing_mode and no_graphs_being_presented():
                     # drag-selected locations
                     if self.drag_start and self.drag_end:
                         self.multiple_locs_selected = []
@@ -1387,6 +1571,7 @@ class Game:
                     ctrl = pygame.key.get_pressed()[K_LCTRL] or pygame.key.get_pressed()[K_RCTRL]
                     pos = pygame.mouse.get_pos()
                     check_location_clicks(pos)
+                    check_console_clickables(pos) 
                     check_deploy_button_clicks(pos, shift, ctrl)
                     check_reenforce_button_clicks(pos, shift, ctrl)
                     check_fleet_clicks(pos)
@@ -1400,7 +1585,7 @@ class Game:
                     # Buttons
                     shift = pygame.key.get_pressed()[K_LSHIFT] or pygame.key.get_pressed()[K_RSHIFT]
                     ctrl = pygame.key.get_pressed()[K_LCTRL] or pygame.key.get_pressed()[K_RCTRL]
-                    if pygame.key.get_pressed()[K_SPACE]:
+                    if pygame.key.get_pressed()[K_SPACE] and no_graphs_being_presented():
                         self.turn_processing_mode = True
                     elif pygame.key.get_pressed()[K_ESCAPE]:
                         if self.deploy_mode:
@@ -1411,15 +1596,27 @@ class Game:
                             self.reenforce_mode = False
                             self.console.push("Reenforce mode cancelled")
                             self.display_changed = True
-                    elif pygame.key.get_pressed()[K_b] and shift and ctrl:
+                        if self.displaying_battle_graph is not None:
+                            self.displaying_battle_graph = None
+                            self.display_changed = True
+                        if self.displaying_stats_graph:
+                            self.displaying_stats_graph = False
+                            self.display_changed = True
+                        if self.displaying_fleets_graph:
+                            self.displaying_fleets_graph = False
+                            self.display_changed = True
+                        if self.political_map_toggle:
+                            self.political_map_toggle = False
+                            self.display_changed = True
+                    elif pygame.key.get_pressed()[K_b] and shift and ctrl and no_graphs_being_presented():
                         self.skipping_tactical_battles = not self.skipping_tactical_battles
                         self.console.push("Skipping Tactical Battles: {}".format(self.skipping_tactical_battles))
                         self.display_changed = True
-                    elif pygame.key.get_pressed()[K_r] and shift and ctrl:
+                    elif pygame.key.get_pressed()[K_r] and shift and ctrl and no_graphs_being_presented():
                         self.routing_mode = not self.routing_mode
                         self.console.push("Routing Mode: {}".format(self.routing_mode))
                         self.display_changed = True
-                    elif pygame.key.get_pressed()[K_w] and shift and ctrl:
+                    elif pygame.key.get_pressed()[K_w] and shift and ctrl and no_graphs_being_presented():
                         self.watch_mode = not self.watch_mode
                         self.console.push("Watch Mode: {}".format(self.watch_mode))
                         self.display_changed = True
@@ -1428,30 +1625,44 @@ class Game:
                         elif not self.watch_mode and FactionType.PLAYER in self.ai_factions:
                             self.ai_factions.remove(FactionType.PLAYER)
                             self.watch_timer = 0
-                    elif pygame.key.get_pressed()[K_d] and shift and ctrl:
+                    elif pygame.key.get_pressed()[K_d] and shift and ctrl and no_graphs_being_presented():
                         self.debug_mode = not self.debug_mode
                         self.console.push("Debug Mode: {}".format(self.debug_mode))
                         self.display_changed = True
-                    elif pygame.key.get_pressed()[K_TAB]:
+                    elif pygame.key.get_pressed()[K_s] and ctrl and shift and no_graphs_being_presented():
+                        self.displaying_stats_graph = True
+                        self.display_changed = True
+                    elif pygame.key.get_pressed()[K_f] and ctrl and shift and no_graphs_being_presented():
+                        self.displaying_fleets_graph = True
+                        self.display_changed = True
+                    elif pygame.key.get_pressed()[K_TAB] and no_graphs_being_presented():
                         if len(self.multiple_fleets_clicked) > 1:
                             self.clicked_fleets_index = (self.clicked_fleets_index + 1) % len(self.multiple_fleets_clicked)
                             self.selected_fleet = self.multiple_fleets_clicked[self.clicked_fleets_index]
                             self.display_changed = True
-                    elif pygame.key.get_pressed()[K_d]:
+                    elif pygame.key.get_pressed()[K_d] and no_graphs_being_presented():
                         activate_deploy_mode()
-                    elif pygame.key.get_pressed()[K_p]:
+                    elif pygame.key.get_pressed()[K_j] and no_graphs_being_presented():
+                        if self.console_scrolled_up_by > 0:
+                            self.console_scrolled_up_by -= 1
+                            self.display_changed = True
+                    elif pygame.key.get_pressed()[K_k] and no_graphs_being_presented():
+                        if len(self.console.messages) - (self.console_scrolled_up_by + 1) >= len(INTRO_STRINGS):
+                            self.console_scrolled_up_by += 1
+                            self.display_changed = True
+                    elif pygame.key.get_pressed()[K_p] and no_graphs_being_presented():
                         self.political_map_toggle = not self.political_map_toggle
                         self.console.push("Political Map View: {}".format(self.political_map_toggle))
                         self.display_changed = True
-                    elif pygame.key.get_pressed()[K_h] and shift and ctrl:
+                    elif pygame.key.get_pressed()[K_h] and shift and ctrl and no_graphs_being_presented():
                         self.hard_mode = not self.hard_mode
                         self.console.push("Hard Mode: {}".format(self.hard_mode))
                         self.display_changed = True
-                    elif pygame.key.get_pressed()[K_c] and shift and ctrl:
+                    elif pygame.key.get_pressed()[K_c] and shift and ctrl and no_graphs_being_presented():
                         self.close_battles_toggle = not self.close_battles_toggle
                         self.console.push("Watching Close Battles Only: {}".format(self.close_battles_toggle))
                         self.display_changed = True
-                elif event.type == MOUSEMOTION and not self.turn_processing_mode:
+                elif event.type == MOUSEMOTION and not self.turn_processing_mode and no_graphs_being_presented():
                     rel = pygame.mouse.get_rel()
                     if rel != (0, 0): # Avoid "very small" mouse movement detection distances
                         pos = pygame.mouse.get_pos()
@@ -1475,6 +1686,7 @@ class Game:
                 last_faction_buff_check()
                 spawn_reenforcements()
                 run_ai_behavior()
+                stats_check() 
                 game_over_check()
                 victory_check()
                 exogalactic_invader_countdown_check()
@@ -1483,6 +1695,7 @@ class Game:
                 self.reenforce_amount = 0
                 self.multiple_fleets_clicked = []
                 self.clicked_fleets_index = 0
+                self.console_scrolled_up_by = 0
                 self.turn_processing_mode = False
                 self.display_changed = True
             elif game_on:
@@ -1596,6 +1809,7 @@ class Game:
                 self.display_changed = True
 
         # Game loop
+        stats_check()
         self.display_changed = True
         draw_display()
         while self.running:
@@ -1622,6 +1836,7 @@ if __name__ == "__main__":
     pygame.display.set_icon(icon)
     pygame.display.set_mode((SCREEN_WIDTH_PX, SCREEN_HEIGHT_PX))
     # I'll include music and SFX down the road, perhaps
+    # NOTE: procedural music! That's a good idea
     pygame.mixer.quit()
     loading_screen()
     game = Game()
