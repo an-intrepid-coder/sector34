@@ -46,7 +46,13 @@
 
 * Using the above controls, the player can now set waypoints for their fleets. Note that waypoint routes will be interrupted by combats, and should be used flexibly, as the situation changes.
 
-**The following toggles can be turned on/off as the player pleases:**
+**The following toggles can be turned on/off as the player pleases (ESCAPE exits all graph modes):**
+
+* Click on a battle in the console log to view its battle graph.
+
+* Ctrl + Shift + F and Ctrl + Shift + S for line graphs about fleets, systems, etc.
+
+* k and j for scrolling the console up or down, respectively.
 
 * ctrl + shift + R to show all current routes / waypoints, with the currently selected fleet shown in a different color, drawn last. 
 
@@ -58,7 +64,7 @@
 
 * 'd' by itself, without shift + ctrl, will activate deploy mode for the currently selected systems.
 
-* Ctrl + Shift + H for "hard mode". This gives a flat bonus to AI Empire ship production, to offset the player's ability to pool and bank reenforcements. They will reach critical mass much sooner, and be a much bigger challenge.
+* Ctrl + Shift + H for "hard mode". This gives a flat bonus to AI Empire ship production, to offset the player's ability to pool and bank reenforcements. They will reach critical mass much sooner, and be a much bigger challenge. For the invader stage, this increases their wave size by .5x. I do not recommend leaving hard mode on from the start of the game (it will probably result in unwinnable games if you do). Instead, use it as a toggle switch to set up certain fights (for example, the late stages of the FFA stage and the early part of the Coalition/Resistance stage are good times to use it).
 
 * Ctrl + Shift + C to only show battles that are unlikely to be lopsided. This isn't fool-proof, and you'll still get some lopsided ones, but it will filter out most of the lopsided ones in the late game if you're like me and enjoy watching the gratuitous space fights when the fleets get big.
 
