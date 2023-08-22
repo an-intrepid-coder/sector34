@@ -110,7 +110,7 @@ The AI has come a long ways, and is capable of putting up a good fight now. Stil
 
 * Invasion: There is a "final boss" after the player has conquered the map, in which they are invaded by forces from beyond the sector! The invaders decimate every world they touch, reducing it to 5% reenforcement chance. They themselves only reenforce in waves (of which there are six total). Each wave brings in 1.5x the *current* number of total player ships (or brings up the current invader numbers to that number). The first wave can come from any side of the map, and all succeeding waves will appear from the same side. I have included a timer which gives a rough ETA window in which the next wave will appear. All a player has to do to win this scenario is be flexible and then hold the line until the waves run out (at which point the invaders will never reenforce, and the player can outnumber them), but it is entirely possible to beat them before they have finished all of their waves. In a future version I will probably have achievements for that. I have many more interesting stages planned, based on how well this one turned out!
 
-![For a more elaborate guide and after-action-review check out this dev log.](https://github.com/an-intrepid-coder/sector34_devlog_runs/blob/main/run.md)
+![For more and deeper tips, check out these devlog AAR runs.](https://github.com/an-intrepid-coder/sector34_devlog_aar_runs)
 
 ### Minimum Requirements:
 
